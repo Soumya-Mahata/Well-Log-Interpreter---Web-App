@@ -47,25 +47,58 @@ st.markdown("""
         border-bottom: 2px solid #BBDEFB; padding-bottom: 3px; margin-top: 1.2rem; }
   h3  { color: #1976D2; font-size: 1.02rem; margin-top: 0.9rem; }
 
-  /* ── metric cards ── */
+  /* ── metric cards — force dark text regardless of theme ── */
   div[data-testid="stMetric"] {
-    background: #E3F2FD; border-radius: 8px;
-    padding: 8px 12px; border-left: 4px solid #1565C0;
+    background: #FFFFFF !important;
+    border-radius: 8px;
+    padding: 8px 12px;
+    border-left: 4px solid #1565C0;
+    border-top: 1px solid #BBDEFB;
+    border-right: 1px solid #BBDEFB;
+    border-bottom: 1px solid #BBDEFB;
+  }
+  /* metric label (top small text) */
+  div[data-testid="stMetric"] label,
+  div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+  div[data-testid="stMetric"] [data-testid="stMetricLabel"] p,
+  div[data-testid="stMetric"] [data-testid="stMetricLabel"] span {
+    color: #1565C0 !important;
+    font-size: 0.80rem !important;
+    font-weight: 600 !important;
+  }
+  /* metric value (large number) */
+  div[data-testid="stMetric"] [data-testid="stMetricValue"],
+  div[data-testid="stMetric"] [data-testid="stMetricValue"] div,
+  div[data-testid="stMetric"] [data-testid="stMetricValue"] span {
+    color: #0D2B5E !important;
+    font-size: 1.55rem !important;
+    font-weight: 700 !important;
+  }
+  /* metric delta */
+  div[data-testid="stMetric"] [data-testid="stMetricDelta"],
+  div[data-testid="stMetric"] [data-testid="stMetricDelta"] span {
+    color: #2E7D32 !important;
   }
 
-  /* ── info / warn boxes ── */
+  /* ── info / warn boxes — always dark text on light bg ── */
   .info-box {
     background: #E3F2FD; border-left: 4px solid #1565C0;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0; font-size: 0.91em;
+    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
+    font-size: 0.91em; color: #0D2B5E !important;
   }
+  .info-box * { color: #0D2B5E !important; }
   .warn-box {
-    background: #FFF8E1; border-left: 4px solid #F57F17;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0; font-size: 0.91em;
+    background: #FFF8E1; border-left: 4px solid #E65100;
+    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
+    font-size: 0.91em; color: #4E2700 !important;
   }
+  .warn-box * { color: #4E2700 !important; }
   .success-box {
     background: #E8F5E9; border-left: 4px solid #2E7D32;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0; font-size: 0.91em;
+    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
+    font-size: 0.91em; color: #1B5E20 !important;
   }
+  .success-box * { color: #1B5E20 !important; }
 
   /* ── tab font ── */
   button[data-baseweb="tab"] { font-size: 0.88rem; }

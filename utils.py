@@ -480,10 +480,19 @@ def kmeans_lithology(df, features, n_clusters=4):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def interpolate_core(core_df, log_depths, core_depth_col="DEPTH", core_phi_col="CPOR"):
-    """Linearly interpolate core porosity onto the log depth grid."""
-    cs = core_df[[core_depth_col, core_phi_col]].dropna().sort_values(core_depth_col)
-    values = np.interp(log_depths.values, cs[core_depth_col].values, cs[core_phi_col].values,
-                       left=np.nan, right=np.nan)
+    """
+    Linearly interpolate core porosity onto the log depth grid.
+    Explicitly casts columns to float64 to avoid TypeError when CSV columns
+    are read as object/string dtype.
+    """
+    cs = core_df[[core_depth_col, core_phi_col]].copy()
+    cs[core_depth_col] = pd.to_numeric(cs[core_depth_col], errors="coerce")
+    cs[core_phi_col]   = pd.to_numeric(cs[core_phi_col],   errors="coerce")
+    cs = cs.dropna().sort_values(core_depth_col)
+    xp = cs[core_depth_col].values.astype(float)
+    fp = cs[core_phi_col].values.astype(float)
+    x  = pd.to_numeric(log_depths, errors="coerce").values.astype(float)
+    values = np.interp(x, xp, fp, left=np.nan, right=np.nan)
     return pd.Series(values, index=log_depths.index)
 
 
