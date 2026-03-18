@@ -1,0 +1,10 @@
+models/
+*.pkl
+*.h5
+*.las
+*.csv
+*.xlsx
+__pycache__/
+.venv/
+.git/
+.gitignore
