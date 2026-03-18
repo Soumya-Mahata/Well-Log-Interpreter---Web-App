@@ -147,9 +147,11 @@ sonic, and photoelectric tools.  Reference lines and mineral points follow
         st.markdown(r"""
 Requires **DT + RHOB + NPHI**.  Computed from:
 
-$$M = \frac{\Delta t_f - \Delta t}{(\rho_b - \rho_f) \times 100}
+$$
+M = \frac{\Delta t_f - \Delta t}{(\rho_b - \rho_f) \times 100}               
 \qquad
-N = \frac{\phi_{Nf} - \phi_N}{\rho_b - \rho_f}$$
+N = \frac{\phi_{Nf} - \phi_N}{\rho_b - \rho_f}
+$$
 
 Reference: Schlumberger 2005b Table 24.1.
         """)
@@ -196,9 +198,11 @@ Reference: Schlumberger 2005b Table 24.1.
 Matrix Identification Diagram — porosity- and mud-type-independent.
 Requires **NPHI + RHOB + DT**.
 
-$$\rho_{maa} = \frac{\rho_b - \phi_{ND}\,\rho_f}{1 - \phi_{ND}}
+$$
+\rho_{maa} = \frac{\rho_b - \phi_{ND}\,\rho_f}{1 - \phi_{ND}}
 \qquad
-\Delta t_{maa} = \frac{\Delta t - \phi_{SN}\,\Delta t_f}{1 - \phi_{SN}}$$
+\Delta t_{maa} = \frac{\Delta t - \phi_{SN}\,\Delta t_f}{1 - \phi_{SN}}
+$$
         """)
         m5a, m5b = st.columns(2)
         nphi_m5 = m5a.selectbox("NPHI", ["None"] + num_cols, key="lit_m5_nphi",

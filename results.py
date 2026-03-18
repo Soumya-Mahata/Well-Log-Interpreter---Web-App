@@ -16,6 +16,42 @@ def _ss(key, default=None):
     return st.session_state.get(key, default)
 
 
+def _render_kpi_cards(stats: dict):
+    """
+    Render a dict of {label: value} as a 2-column grid of KPI cards.
+    Uses raw HTML so text is always dark-on-white regardless of Streamlit theme.
+    Avoids st.metric() whose text inherits the app theme and becomes
+    invisible (white-on-light) in Streamlit's dark mode.
+    """
+    items = list(stats.items())
+    # Split into pairs for two-column layout
+    for i in range(0, len(items), 2):
+        cols = st.columns(2)
+        for j, col in enumerate(cols):
+            if i + j >= len(items):
+                break
+            label, value = items[i + j]
+            col.markdown(
+                f"""
+                <div style="
+                    background:#FFFFFF;
+                    border-left:4px solid #1565C0;
+                    border:1px solid #BBDEFB;
+                    border-left:4px solid #1565C0;
+                    border-radius:8px;
+                    padding:12px 16px;
+                    margin-bottom:8px;
+                ">
+                  <div style="color:#1565C0;font-size:0.78rem;font-weight:600;
+                              letter-spacing:0.03em;margin-bottom:4px;">{label}</div>
+                  <div style="color:#0D2B5E;font-size:1.6rem;font-weight:700;
+                              line-height:1.2;">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def render(df: pd.DataFrame):
     st.title("📊 Results & Export")
 
@@ -117,14 +153,16 @@ A depth sample is **net pay** only when **all** applied cutoffs are satisfied:
 
                 stats = utils.compute_net_pay(df, pay_flag)
 
-                # KPI row
+                # KPI row — use HTML cards to avoid theme-dependent invisible text
                 st.markdown("#### Reservoir Summary")
-                k1, k2, k3, k4, k5 = st.columns(5)
-                k1.metric("Gross Interval",  f"{stats.get('Gross Interval', 0):.1f}")
-                k2.metric("Net Pay",          f"{stats.get('Net Pay',        0):.1f}")
-                k3.metric("NTG",              f"{stats.get('NTG',            0)*100:.1f}%")
-                k4.metric("Pay Samples",      f"{stats.get('Pay Samples',    0):,}")
-                k5.metric("Sample Interval",  f"{stats.get('Sample Interval',0):.2f}")
+                kpi_display = {
+                    "Gross Interval":  f"{stats.get('Gross Interval', 0):.1f}",
+                    "Net Pay":         f"{stats.get('Net Pay',        0):.1f}",
+                    "NTG":             f"{stats.get('NTG',            0)*100:.1f}%",
+                    "Pay Samples":     f"{stats.get('Pay Samples',    0):,}",
+                    "Sample Interval": f"{stats.get('Sample Interval',0):.2f}",
+                }
+                _render_kpi_cards(kpi_display)
 
                 # Pay interval table
                 idf = utils.get_pay_intervals(df, pay_flag)
@@ -241,6 +279,4 @@ A depth sample is **net pay** only when **all** applied cutoffs are satisfied:
         if "PAY_FLAG" in df_cur.columns:
             st.subheader("Net Pay Summary")
             pay_stats = utils.compute_net_pay(df_cur, df_cur["PAY_FLAG"].astype(bool))
-            col_a, col_b = st.columns(2)
-            for i, (k, v) in enumerate(pay_stats.items()):
-                (col_a if i % 2 == 0 else col_b).metric(k, str(v))
+            _render_kpi_cards(pay_stats)
