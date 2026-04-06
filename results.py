@@ -53,7 +53,7 @@ def _render_kpi_cards(stats: dict):
 
 
 def render(df: pd.DataFrame):
-    st.title("📊 Results & Export")
+    st.title("📊 Integration & Results")
 
     num_cols = [c for c in df.columns if c != "DEPTH"]
     _gr   = utils.find_col(df, ["GR",   "GRD"])

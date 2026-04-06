@@ -19,92 +19,35 @@ import numpy as np
 import utils
 import plots
 import qc
+import data_gen
 import lithology
 import porosity
 import fluids
 import results
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG  (must be the very first Streamlit call)
+# Page config
 # ─────────────────────────────────────────────────────────────────────────────
-
 st.set_page_config(
-    page_title="Well Log Interpreter",
+    page_title="Petrophysics Platform",
     page_icon="🛢️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CSS
+# ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  /* ── layout ── */
-  .block-container { padding-top: 0.8rem; padding-bottom: 1rem; }
-  section[data-testid="stSidebar"] { min-width: 240px; max-width: 280px; }
-
-  /* ── typography ── */
-  h1  { color: #0D47A1; font-size: 1.55rem; }
-  h2  { color: #1565C0; font-size: 1.18rem;
-        border-bottom: 2px solid #BBDEFB; padding-bottom: 3px; margin-top: 1.2rem; }
-  h3  { color: #1976D2; font-size: 1.02rem; margin-top: 0.9rem; }
-
-  /* ── metric cards — force dark text regardless of theme ── */
-  div[data-testid="stMetric"] {
-    background: #FFFFFF !important;
-    border-radius: 8px;
-    padding: 8px 12px;
-    border-left: 4px solid #1565C0;
-    border-top: 1px solid #BBDEFB;
-    border-right: 1px solid #BBDEFB;
-    border-bottom: 1px solid #BBDEFB;
-  }
-  /* metric label (top small text) */
-  div[data-testid="stMetric"] label,
-  div[data-testid="stMetric"] [data-testid="stMetricLabel"],
-  div[data-testid="stMetric"] [data-testid="stMetricLabel"] p,
-  div[data-testid="stMetric"] [data-testid="stMetricLabel"] span {
-    color: #1565C0 !important;
-    font-size: 0.80rem !important;
-    font-weight: 600 !important;
-  }
-  /* metric value (large number) */
-  div[data-testid="stMetric"] [data-testid="stMetricValue"],
-  div[data-testid="stMetric"] [data-testid="stMetricValue"] div,
-  div[data-testid="stMetric"] [data-testid="stMetricValue"] span {
-    color: #0D2B5E !important;
-    font-size: 1.55rem !important;
-    font-weight: 700 !important;
-  }
-  /* metric delta */
-  div[data-testid="stMetric"] [data-testid="stMetricDelta"],
-  div[data-testid="stMetric"] [data-testid="stMetricDelta"] span {
-    color: #2E7D32 !important;
-  }
-
-  /* ── info / warn boxes — always dark text on light bg ── */
-  .info-box {
-    background: #E3F2FD; border-left: 4px solid #1565C0;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
-    font-size: 0.91em; color: #0D2B5E !important;
-  }
-  .info-box * { color: #0D2B5E !important; }
-  .warn-box {
-    background: #FFF8E1; border-left: 4px solid #E65100;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
-    font-size: 0.91em; color: #4E2700 !important;
-  }
-  .warn-box * { color: #4E2700 !important; }
-  .success-box {
-    background: #E8F5E9; border-left: 4px solid #2E7D32;
-    padding: 9px 14px; border-radius: 4px; margin: 6px 0;
-    font-size: 0.91em; color: #1B5E20 !important;
-  }
-  .success-box * { color: #1B5E20 !important; }
-
-  /* ── tab font ── */
-  button[data-baseweb="tab"] { font-size: 0.88rem; }
+    .main {background-color: #0f1117;}
+    .stButton>button {background:#1e6f9f; color:white; border-radius:6px;}
+    .stButton>button:hover {background:#2196f3;}
+    .metric-card {background:#1a1d27; border-radius:10px; padding:16px; margin:4px;}
+    h1, h2, h3 {color:#e0e8f0;}
+    .stTabs [data-baseweb="tab"] {font-size:15px; font-weight:600;}
 </style>
 """, unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SESSION STATE — initialise once, never reset on navigation
@@ -158,22 +101,23 @@ for _k, _v in _SS_DEFAULTS.items():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR
+# Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
-
 with st.sidebar:
-    st.markdown("### 🛢️ Well Log Interpreter")
-    st.caption("Formation Evaluation Suite · v3")
+    st.image("https://img.icons8.com/color/96/oil-rig.png", width=80)
+    st.title("Petrophysics Platform")
+    st.caption("Academic-Grade Well Log Interpretation")
     st.divider()
 
     page = st.radio(
         "Navigate",
         [
             "📂 Data Loading & QC",
-            "🪨 Lithology",
-            "🕳️ Porosity",
+            "🤖 Missing Data Generation",
+            "🪨 Lithology Identification",
+            "🕳️ Porosity Estimation",
             "💧 Fluid Analysis",
-            "📊 Results & Export",
+            "📊 Integration & Results",
         ],
         label_visibility="collapsed",
         key="page_radio",
@@ -400,7 +344,7 @@ if page == "📂 Data Loading & QC":
     st.header("6. Raw Data Preview")
     df_show = st.session_state.df
     st.caption(f"{len(df_show):,} rows  ×  {len(df_show.columns)} columns")
-    st.dataframe(df_show.head(400), use_container_width=True, height=280)
+    st.dataframe(df_show, use_container_width=True, height=280)
 
     # ── 7. Quick Log View ─────────────────────────────────────────────────────
     st.header("7. Quick Log View")
@@ -432,11 +376,15 @@ if page == "📂 Data Loading & QC":
 # OTHER PAGES — each module receives the current df from session_state
 # ─────────────────────────────────────────────────────────────────────────────
 
-elif page == "🪨 Lithology":
+elif page == "🤖 Missing Data Generation":
     require_data()
     lithology.render(st.session_state.df)
 
-elif page == "🕳️ Porosity":
+elif page == "🪨 Lithology Identification":
+    require_data()
+    lithology.render(st.session_state.df)
+
+elif page == "🕳️ Porosity Estimation":
     require_data()
     porosity.render(st.session_state.df)
 
@@ -444,7 +392,7 @@ elif page == "💧 Fluid Analysis":
     require_data()
     fluids.render(st.session_state.df)
 
-elif page == "📊 Results & Export":
+elif page == "📊 Integration & Results":
     require_data()
     results.render(st.session_state.df)
 
@@ -455,7 +403,6 @@ elif page == "📊 Results & Export":
 
 st.divider()
 st.caption(
-    "Well Log Interpreter v3  ·  Streamlit + LASio + Plotly  ·  "
-    "Archie (1942)  ·  Wyllie (1956)  ·  M-N / MID — Schlumberger (2005b)  ·  "
-    "Crossplot theory — IIT ISM Formation Evaluation (Mandal 2026)"
+    " Petrophysics Platform  ·  Academic-Grade Well Log Interpreter  "
+    "-- Developed by -- [Trinakshi  ·  Ratul  ·  Sayantan  ·  Soumya]"
 )
