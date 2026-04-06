@@ -1,4 +1,4 @@
-# Well-Log-Interpreter---Web-App
+# Petrophysics Platform - Web App
 
 - Visit the app here:
-    https://well-log-interpreter.streamlit.app/
+    https://petrophysics-platform.streamlit.app
