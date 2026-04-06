@@ -295,23 +295,31 @@ Gas shifts ρmaa upward; barite shifts Umaa to the right.
         st.subheader("Custom Crossplot")
         c1, c2, c3 = st.columns(3)
         x_cx  = c1.selectbox("X axis", num_cols, key="lit_cx_x",
-                              index=_idx(_nphi, num_cols) if _nphi else 0)
+                            index=_idx(_nphi, num_cols) if _nphi else 0)
         y_cx  = c2.selectbox("Y axis", num_cols, key="lit_cx_y",
-                              index=_idx(_rhob, num_cols) if _rhob else 1)
+                            index=_idx(_rhob, num_cols) if _rhob else 1)
         col_cx = c3.selectbox("Colour by", color_opts, key="lit_cx_color",
-                               index=_idx(_gr, color_opts))
+                            index=_idx(_gr, color_opts))
+        invert_y_main = st.checkbox("Invert Y-axis (Main Crossplot)", key="lit_inv_y_main")
 
         # Use cluster column if it already exists
         df_cur     = st.session_state.df
         has_cluster = "CLUSTER" in df_cur.columns
+
         fig_cx = plots.plot_crossplot(
-            df_cur, x_cx, y_cx,
+            df_cur,
+            x_cx,
+            y_cx,
             color_col=(None if col_cx == "None" else col_cx),
-            cluster_col=("CLUSTER" if has_cluster else None),
+            cluster_col=None,   # ✅ FIX: removed automatic CLUSTER coupling
             title=f"{x_cx}  vs  {y_cx}",
         )
+
+        if invert_y_main:
+            fig_cx.update_yaxes(autorange="reversed")
+
         st.plotly_chart(fig_cx, use_container_width=True,
-                key="lithology_pc7")
+                        key="lithology_pc7")
 
         st.divider()
         st.subheader("K-Means Lithology Clustering")
@@ -319,6 +327,7 @@ Gas shifts ρmaa upward; barite shifts Umaa to the right.
             "Groups depth samples with similar log signatures into N lithofacies classes.  "
             "Results are stored as column **CLUSTER** and used to colour the crossplot above."
         )
+
         feats = st.multiselect(
             "Features",
             num_cols,
@@ -341,14 +350,30 @@ Gas shifts ρmaa upward; barite shifts Umaa to the right.
         if "CLUSTER" in st.session_state.df.columns:
             df_cl = st.session_state.df
             ca, cb = st.columns([1, 2])
+
             with ca:
-                st.plotly_chart(plots.plot_cluster_strip(df_cl, "CLUSTER"),
-                                use_container_width=True,
-                key="lithology_pc8")
-            with cb:
                 st.plotly_chart(
-                    plots.plot_crossplot(df_cl, x_cx, y_cx, cluster_col="CLUSTER",
-                                         title=f"Clusters — {x_cx} vs {y_cx}"),
+                    plots.plot_cluster_strip(df_cl, "CLUSTER"),
                     use_container_width=True,
-                key="lithology_pc9",
+                    key="lithology_pc8"
+                )
+
+            with cb:
+                invert_y_cluster = st.checkbox("Invert Y-axis (Cluster Plot)", key="lit_inv_y_cluster")
+
+                fig_cluster = plots.plot_crossplot(
+                    df_cl,
+                    x_cx,
+                    y_cx,
+                    cluster_col="CLUSTER",
+                    title=f"Clusters — {x_cx} vs {y_cx}"
+                )
+
+                if invert_y_cluster:
+                    fig_cluster.update_yaxes(autorange="reversed")
+
+                st.plotly_chart(
+                    fig_cluster,
+                    use_container_width=True,
+                    key="lithology_pc9",
                 )
