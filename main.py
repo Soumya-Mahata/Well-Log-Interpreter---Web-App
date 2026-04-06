@@ -378,7 +378,7 @@ if page == "📂 Data Loading & QC":
 
 elif page == "🤖 Missing Data Generation":
     require_data()
-    lithology.render(st.session_state.df)
+    data_gen.render(st.session_state.df)
 
 elif page == "🪨 Lithology Identification":
     require_data()
