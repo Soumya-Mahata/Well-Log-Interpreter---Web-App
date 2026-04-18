@@ -2,65 +2,71 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-**Well Log Interpreter** — Streamlit web application for petrophysical analysis of well-log LAS files. The app performs formation evaluation including lithology identification, porosity estimation, and fluid saturation calculations.
-
-Live app: https://well-log-interpreter.streamlit.app/
-
-## Commands
+## Quick Start
 
 ```bash
-# Run the application
 streamlit run main.py
-
-# Install dependencies
-pip install -r requirements.txt
 ```
 
-## Architecture
+The app is available at https://petrophysics-platform.streamlit.app
 
-### Module Structure
+## Architecture Overview
+
+**Single-page Streamlit application** for well log interpretation with 6 navigation sections:
+
+1. **Data Loading & QC** (`main.py` + `utils.py`) - LAS file parsing, curve selection, depth filtering
+2. **Missing Data Generation** (`data_gen.py` + `dg_*.py`) - Predict Vp/Vs using conventional, ML, or DL methods
+3. **Lithology Identification** (`lithology.py`) - Crossplots + K-means clustering
+4. **Porosity Estimation** (`porosity.py`) - Density, sonic, neutron porosity calculations
+5. **Fluid Analysis** (`fluids.py`) - Archie saturation, pay flag computation
+6. **Results** (`results.py`) - Integrated log display
+
+### Core Modules
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Single-page Streamlit entry point with sidebar navigation. Manages `st.session_state` for persistent state across tabs. |
-| `utils.py` | Pure computation engine (no Streamlit deps). LAS I/O, petrophysical calculations (Vsh, porosity, Archie's law, M-N plots), K-means clustering. |
-| `plots.py` | Plotly visualization library. All functions return `go.Figure` ready for `st.plotly_chart()`. |
-| `qc.py` | Quality control: null handling, outlier detection (Z-score/MAD), smoothing, hole quality. |
-| `lithology.py` | Six standard crossplots (NPHI-RHOB, NPHI-DT, M-N, MID) + K-means clustering. |
-| `porosity.py` | Density/neutron/sonic porosity with shale correction and core calibration. |
-| `fluids.py` | Archie saturation calculation with 3 Rw estimation methods (direct, Pickett, SP). |
-| `results.py` | Triple combo log, net pay calculation, composite interpretation, CSV export. |
+| `main.py` | Entry point, session state management, navigation |
+| `utils.py` | Petrophysical calculations (no Streamlit dependency) |
+| `plots.py` | Plotly figure builders |
+| `dg_utils.py` | Shared ML/DL helpers, Plotly builders |
+| `dg_conventional.py` | Gardner, Castagna, Brocher equations |
+| `dg_unconventional.py` | scikit-learn/XGBoost + PyTorch models |
+| `dg_comparison.py` | Model evaluation metrics |
 
-### Data Flow
+### Session State Pattern
 
-1. **Upload** → `utils.load_las()` → `raw_df` (immutable)
-2. **Rename/Select** → `df_full` (working copy with renamed curves)
-3. **Depth Filter** → `df` (filtered view used by all modules)
-4. **Computation** → New columns added to `st.session_state.df`
+All persistent state lives in `st.session_state` (initialized in `main.py:56-96`):
+- `df` - working dataframe (modified by depth filter)
+- `df_full` - full depth range after rename
+- `raw_df` - original parsed data (never modified)
+- Computed columns: `VSH`, `PHID/PHIN/PHIS/PHIE`, `SW`, `CLUSTER`, `Vp_pred`, etc.
 
-### Session State Keys
+## Key Dependencies
 
-- `las`, `raw_df`, `df_full`, `df` — data objects
-- `rename_map`, `selected_curves` — curve management
-- `depth_top`, `depth_base` — depth filter bounds
-- `por_*`, `fl_*` — porosity/fluid parameters (persisted across tabs)
-- `vsh_done`, `por_done`, `sw_done` — computation flags
+- **Core**: `streamlit`, `pandas`, `numpy`, `plotly`
+- **ML**: `scikit-learn`, `xgboost`, `torch` (PyTorch)
+- **Domain**: `lasio` (LAS file parsing)
 
-### Key Petrophysical Functions
+Install: `pip install -r requirements.txt`
 
-- `compute_vshale_gr()` — Linear GR shale volume (Larionov)
-- `density_porosity()`, `sonic_porosity()`, `neutron_porosity()` — standard transforms
-- `total_porosity()` — gas-corrected density+neutron combination
-- `effective_porosity()` — PHIT corrected for shale
-- `compute_M()`, `compute_N()` — M-N plot coordinates
-- `compute_rho_maa()`, `compute_dt_maa()`, `compute_U_maa()` — MID plot
-- `water_saturation_archie()` — Archie's law with customizable a, m, n, Rw
-- `flag_reservoir()` — net pay flag based on cutoffs
+## Data Flow
 
-### Reference Standards
+```
+LAS file → utils.load_las() → raw_df → rename/selection → df_full → depth filter → df
+                                    ↓
+                            All modules read/write to st.session_state.df
+```
 
-- Mineral properties from Schlumberger Log Interpretation Charts (2005b)
-- Archie (1942), Wyllie Time-Average (1956)
-- M-N/MID plots — Burke et al. (1969)
+## Adding New Features
+
+1. **New computed curve**: Add function to `utils.py`, then call from appropriate module (e.g., `porosity.py`)
+2. **New crossplot**: Add to `plots.py`, then add tab in `lithology.py`
+3. **New ML model**: Add to `dg_unconventional.py`, follow `_build_ml_model()` pattern
+4. **New page**: Add to `main.py` navigation, create module following `render(df)` signature
+
+## Testing
+
+No automated tests. Validate petrophysical calculations against:
+- Schlumberger Log Interpretation charts
+- IIT ISM lecture notes (Mandal 2026)
+- Haritha et al. (2025) for CNN-Bi-LSTM architecture
