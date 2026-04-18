@@ -10,6 +10,16 @@ Implements physics-based equations to predict Vp / Vs:
   5. Brocher (2005)       Vp → Vs
   6. Carroll (1969)       Vp → Vs
 
+Unit handling:
+  • All internal calculations are performed in **km/s**.
+  • Velocity log curves may be supplied in one of three units:
+        – km/s         (no conversion needed)
+        – m/s          (÷ 1000)
+        – µs/ft  (DT)  (1 000 000 / (value × 3280.84) → km/s)
+  • Predicted output is always stored in **km/s**; a companion column
+    stores the result converted back to the *same unit as the input*
+    so users can compare directly in their preferred domain.
+
 Public entry point:
     from dg_conventional import render
     render(df)
@@ -28,28 +38,92 @@ from dg_utils import (
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# EMPIRICAL EQUATIONS
+# UNIT CONVERSION HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _gardner(rhob: pd.Series) -> pd.Series:
-    """
-    Gardner et al. (1974)
-    ρ = 0.31 · Vp^0.25   →   Vp = (ρ / 0.31)^4   [km/s from g/cc]
-    """
-    return (rhob / 0.31) ** 4.0 / 1000.0
+# Available velocity units presented to the user
+_VEL_UNITS = ["km/s", "m/s", "µs/ft (DT)"]
+
+# Density units (Gardner output / RHOB input)
+_DEN_UNITS = ["g/cc (g/cm³)", "kg/m³"]
 
 
-def _castagna_vp2vs(vp: pd.Series) -> pd.Series:
+def _to_kms(series: pd.Series, unit: str) -> pd.Series:
+    """Convert a velocity series to km/s from the specified unit."""
+    if unit == "km/s":
+        return series
+    elif unit == "m/s":
+        return series / 1_000.0
+    elif unit == "µs/ft (DT)":
+        # DT [µs/ft] → Vp [km/s]
+        # Vp [ft/µs] = 1 / DT[µs/ft]
+        # Vp [m/s]   = (1 / DT[µs/ft]) × (1 ft / 1 µs) × (1e6 µs / s) × (0.3048 m / ft)
+        # Vp [km/s]  = Vp [m/s] / 1000
+        dt_safe = series.clip(lower=1e-6)
+        return (1_000_000.0 * 0.3048) / (dt_safe * 1_000.0)
+    else:
+        raise ValueError(f"Unknown velocity unit: {unit!r}")
+
+
+def _from_kms(series: pd.Series, unit: str) -> pd.Series:
+    """Convert a velocity series from km/s back to the specified unit."""
+    if unit == "km/s":
+        return series
+    elif unit == "m/s":
+        return series * 1_000.0
+    elif unit == "µs/ft (DT)":
+        # Vp [km/s] → DT [µs/ft]
+        vp_safe = series.clip(lower=1e-6)
+        return (1_000_000.0 * 0.3048) / (vp_safe * 1_000.0)
+    else:
+        raise ValueError(f"Unknown velocity unit: {unit!r}")
+
+
+def _to_gcc(series: pd.Series, unit: str) -> pd.Series:
+    """Convert density to g/cc."""
+    if unit == "g/cc (g/cm³)":
+        return series
+    elif unit == "kg/m³":
+        return series / 1_000.0
+    else:
+        raise ValueError(f"Unknown density unit: {unit!r}")
+
+
+def _unit_label(unit: str) -> str:
+    """Short label for axis / column names."""
+    return {
+        "km/s":       "km/s",
+        "m/s":        "m/s",
+        "µs/ft (DT)": "µs/ft",
+    }.get(unit, unit)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EMPIRICAL EQUATIONS  (all inputs / outputs in km/s or g/cc)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _gardner(rhob_gcc: pd.Series) -> pd.Series:
+    """
+    Gardner et al. (1974) — inverted for Vp
+    Standard form (SI):  ρ [g/cc] = 0.31 · Vp [m/s]^0.25
+    Inverted:            Vp [m/s] = (ρ / 0.31)^4
+                         Vp [km/s] = Vp [m/s] / 1000
+    """
+    vp_ms = (rhob_gcc / 0.31) ** 4.0
+    return vp_ms / 1_000.0
+
+
+def _castagna_vp2vs(vp_kms: pd.Series) -> pd.Series:
     """
     Castagna et al. (1985) Mudrock Line
     Vs = 0.8621·Vp − 1.1724   [both in km/s]
     """
-    return 0.8621 * vp - 1.1724
+    return 0.8621 * vp_kms - 1.1724
 
 
-def _castagna_vs2vp(vs: pd.Series) -> pd.Series:
-    """Inverse Castagna: Vp = (Vs + 1.1724) / 0.8621"""
-    return (vs + 1.1724) / 0.8621
+def _castagna_vs2vp(vs_kms: pd.Series) -> pd.Series:
+    """Inverse Castagna: Vp = (Vs + 1.1724) / 0.8621  [km/s]"""
+    return (vs_kms + 1.1724) / 0.8621
 
 
 def _smith(rt: pd.Series) -> pd.Series:
@@ -60,21 +134,25 @@ def _smith(rt: pd.Series) -> pd.Series:
     return 1.0 / (0.02 * np.log(rt.clip(lower=0.1)) + 0.1)
 
 
-def _brocher(vp: pd.Series) -> pd.Series:
+def _brocher(vp_kms: pd.Series) -> pd.Series:
     """
-    Brocher (2005) polynomial:
+    Brocher (2005) polynomial  [Vp and Vs in km/s, valid 1.5–8.5 km/s]
     Vs = 0.7858 − 1.2344·Vp + 0.7949·Vp² − 0.1238·Vp³ + 0.0064·Vp⁴
     """
-    v = vp.values
+    v = vp_kms.values
     return pd.Series(
         0.7858 - 1.2344*v + 0.7949*v**2 - 0.1238*v**3 + 0.0064*v**4,
-        index=vp.index,
+        index=vp_kms.index,
     )
 
 
-def _carroll(vp: pd.Series) -> pd.Series:
-    """Carroll (1969): Vs = (Vp − 1.36) / 1.16"""
-    return (vp - 1.36) / 1.16
+def _carroll(vp_kms: pd.Series) -> pd.Series:
+    """
+    Carroll (1969)
+    Vs = 1.09913326 × Vp^0.9238115336   [km/s]
+    Valid for Vp/Vs ratio between 1.61 and 1.85 (Poisson's ratio 0.22–0.28).
+    """
+    return 1.09913326 * (vp_kms.clip(lower=0.0) ** 0.9238115336)
 
 
 # ── Method registry ───────────────────────────────────────────────────────────
@@ -87,15 +165,19 @@ _METHODS = [
     "Carroll (1969) — Vp → Vs",
 ]
 
-# Map: method label → (required_input, output_tag, unc_fraction, fn)
+# Map: method label → (required_input_role, output_tag, unc_fraction, fn)
 _DISPATCH = {
-    "Gardner (1974) — ρ → Vp":                ("rhob", "Vp", 0.05, _gardner),
-    "Castagna (1985) — Vp → Vs  (Mudrock Line)": ("vp",  "Vs", 0.05, _castagna_vp2vs),
-    "Castagna (1985) — Vs → Vp  (Inverse)":  ("vs",  "Vp", 0.05, _castagna_vs2vp),
-    "Smith (2007) — Rt → Vp":                ("rt",   "Vp", 0.08, _smith),
-    "Brocher (2005) — Vp → Vs":              ("vp",   "Vs", 0.05, _brocher),
-    "Carroll (1969) — Vp → Vs":              ("vp",   "Vs", 0.06, _carroll),
+    "Gardner (1974) — ρ → Vp":                   ("rhob", "Vp", 0.05, _gardner),
+    "Castagna (1985) — Vp → Vs  (Mudrock Line)":  ("vp",   "Vs", 0.05, _castagna_vp2vs),
+    "Castagna (1985) — Vs → Vp  (Inverse)":       ("vs",   "Vp", 0.05, _castagna_vs2vp),
+    "Smith (2007) — Rt → Vp":                     ("rt",   "Vp", 0.08, _smith),
+    "Brocher (2005) — Vp → Vs":                   ("vp",   "Vs", 0.05, _brocher),
+    "Carroll (1969) — Vp → Vs":                   ("vp",   "Vs", 0.06, _carroll),
 }
+
+# Which methods need a velocity input and which role they use
+_NEEDS_VP_UNIT = {"vp", "vs"}   # roles whose column needs unit conversion
+_NEEDS_RT      = {"rt"}         # resistivity — no velocity unit needed
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -103,27 +185,32 @@ _DISPATCH = {
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render(df: pd.DataFrame) -> None:
-    section_header("🔵", "Conventional / Empirical Methods",
-                   "Physics-based equations — no training required")
+    section_header(
+        "🔵", "Conventional / Empirical Methods",
+        "Physics-based equations — no training required",
+    )
 
     st.markdown("""
-| Method | Input → Output | Uncertainty |
-|--------|---------------|-------------|
-| Gardner (1974) | ρ (RHOB) → Vp | ±5 % heuristic |
-| Castagna (1985) | Vp → Vs | ±5 % heuristic |
-| Castagna (1985) inverse | Vs → Vp | ±5 % heuristic |
-| Smith (2007) | Rt → Vp | ±8 % heuristic |
-| Brocher (2005) | Vp → Vs | ±5 % heuristic |
-| Carroll (1969) | Vp → Vs | ±6 % heuristic |
+| Method | Input → Output | Equation | Uncertainty |
+|--------|---------------|----------|-------------|
+| Gardner (1974) | ρ (RHOB) → Vp | ρ = 0.31·Vp^0.25 (inverted) | ±5 % |
+| Castagna (1985) | Vp → Vs | Vs = 0.8621·Vp − 1.1724 | ±5 % |
+| Castagna (1985) inverse | Vs → Vp | Vp = (Vs + 1.1724) / 0.8621 | ±5 % |
+| Smith (2007) | Rt → Vp | Vp = 1 / (0.02·ln(Rt) + 0.1) | ±8 % |
+| Brocher (2005) | Vp → Vs | 4th-order polynomial | ±5 % |
+| Carroll (1969) | Vp → Vs | Vs = 1.09913326·Vp^0.9238 | ±6 % |
     """)
 
     st.divider()
 
     # ── Method selector ───────────────────────────────────────────────────────
-    method = st.selectbox("Select empirical method", _METHODS,
-                          key="dg_conv_method")
+    method = st.selectbox(
+        "Select empirical method", _METHODS, key="dg_conv_method",
+    )
 
-    # ── Curve selectors (show all; only the relevant one is used) ─────────────
+    required_role = _DISPATCH[method][0]
+
+    # ── Curve selectors ───────────────────────────────────────────────────────
     num  = numeric_cols(df)
     opts = ["None"] + num
 
@@ -136,21 +223,88 @@ def render(df: pd.DataFrame) -> None:
         return opts.index(auto) if auto in opts else 0
 
     c1, c2, c3, c4 = st.columns(4)
-    rhob_col = c1.selectbox("RHOB (g/cc)", opts, key="dg_rhob_sel",  index=idx(auto_rhob))
-    vp_col   = c2.selectbox("Vp   (km/s)", opts, key="dg_vp_sel",    index=idx(auto_vp))
-    vs_col   = c3.selectbox("Vs   (km/s)", opts, key="dg_vs_sel",    index=idx(auto_vs))
-    rt_col   = c4.selectbox("Rt (ohm·m)", opts,  key="dg_rt_sel",    index=idx(auto_rt))
+    rhob_col = c1.selectbox("RHOB (density)",  opts, key="dg_rhob_sel", index=idx(auto_rhob))
+    vp_col   = c2.selectbox("Vp / DT curve",   opts, key="dg_vp_sel",   index=idx(auto_vp))
+    vs_col   = c3.selectbox("Vs / DTS curve",  opts, key="dg_vs_sel",   index=idx(auto_vs))
+    rt_col   = c4.selectbox("Rt (ohm·m)",       opts, key="dg_rt_sel",   index=idx(auto_rt))
 
     rhob_col = None if rhob_col == "None" else rhob_col
     vp_col   = None if vp_col   == "None" else vp_col
     vs_col   = None if vs_col   == "None" else vs_col
     rt_col   = None if rt_col   == "None" else rt_col
 
-    # Map curve-role strings to actual column names
-    input_map = {"rhob": rhob_col, "vp": vp_col, "vs": vs_col, "rt": rt_col}
-    # Map output tag to the corresponding "true" reference column for display
-    true_map  = {"Vp": vp_col, "Vs": vs_col}
+    # ── Unit selectors (shown contextually) ──────────────────────────────────
+    st.markdown("##### ⚙️ Unit Configuration")
+    st.caption(
+        "Sonic logs are commonly stored as slowness (DT) in **µs/ft**. "
+        "Select the unit that matches your input curve(s); the engine converts "
+        "to km/s internally and reports the prediction in the same unit."
+    )
 
+    u1, u2, u3 = st.columns(3)
+
+    # Velocity unit for Vp input (used by Castagna Vp→Vs, Brocher, Carroll, Castagna inverse input)
+    vp_unit = u1.selectbox(
+        "Vp / DT input unit",
+        _VEL_UNITS,
+        index=2 if (auto_vp and any(k in auto_vp.upper() for k in ("DT", "DTCO"))) else 0,
+        key="dg_vp_unit",
+        help="Unit of the compressional velocity/slowness curve selected above.",
+    )
+
+    # Velocity unit for Vs input (used by Castagna inverse Vs→Vp)
+    vs_unit = u2.selectbox(
+        "Vs / DTS input unit",
+        _VEL_UNITS,
+        index=2 if (auto_vs and any(k in auto_vs.upper() for k in ("DT", "DTS", "DTSM"))) else 0,
+        key="dg_vs_unit",
+        help="Unit of the shear velocity/slowness curve selected above.",
+    )
+
+    # Density unit for RHOB input (Gardner only)
+    den_unit = u3.selectbox(
+        "RHOB / density unit",
+        _DEN_UNITS,
+        index=0,
+        key="dg_den_unit",
+        help="Unit of the bulk density curve (Gardner method only).",
+    )
+
+    # Output unit selector — for the *predicted* velocity column
+    out_unit = st.selectbox(
+        "Predicted output unit",
+        _VEL_UNITS,
+        index=0,
+        key="dg_out_unit",
+        help=(
+            "The prediction is always computed in km/s. "
+            "Choose the unit in which the result column is saved to the dataset."
+        ),
+    )
+
+    # Determine which input unit applies to the active method
+    _role_unit_map = {
+        "vp":   vp_unit,
+        "vs":   vs_unit,
+        "rhob": den_unit,   # density — not velocity, handled separately
+        "rt":   None,       # resistivity — no unit conversion
+    }
+
+    # Conversion note
+    if required_role in _NEEDS_VP_UNIT:
+        active_unit = _role_unit_map[required_role]
+        if active_unit == "µs/ft (DT)":
+            st.info(
+                "🔄 **DT → velocity conversion active**: "
+                f"DT [µs/ft] will be converted to km/s using "
+                "`Vp [km/s] = (10⁶ × 0.3048) / (DT × 1000)` "
+                "before applying the empirical equation.",
+                icon=None,
+            )
+
+    st.divider()
+
+    # ── Run button ────────────────────────────────────────────────────────────
     if not st.button("▶ Apply Method", type="primary", key="dg_conv_run"):
         return
 
@@ -161,13 +315,22 @@ def render(df: pd.DataFrame) -> None:
         return
 
     required_role, out_tag, unc_frac, fn = cfg
+
+    input_map = {
+        "rhob": rhob_col,
+        "vp":   vp_col,
+        "vs":   vs_col,
+        "rt":   rt_col,
+    }
+    true_map = {"Vp": vp_col, "Vs": vs_col}
+
     in_col = input_map[required_role]
 
     if not in_col:
         role_labels = {
-            "rhob": "RHOB (density)",
-            "vp":   "Vp (P-wave velocity)",
-            "vs":   "Vs (S-wave velocity)",
+            "rhob": "RHOB / bulk density",
+            "vp":   "Vp / compressional slowness (DT)",
+            "vs":   "Vs / shear slowness (DTS)",
             "rt":   "Rt (resistivity)",
         }
         st.error(
@@ -176,23 +339,68 @@ def render(df: pd.DataFrame) -> None:
         )
         return
 
-    # Compute prediction
+    # ── Build working copy ────────────────────────────────────────────────────
     df_upd = st.session_state.df.copy()
-    pred_col = f"{out_tag}_pred"
+
+    # ── Convert input to internal unit (km/s or g/cc) ─────────────────────────
+    raw_input = df_upd[in_col]
+
+    if required_role in _NEEDS_VP_UNIT:
+        input_unit = _role_unit_map[required_role]
+        input_kms  = _to_kms(raw_input, input_unit)
+    elif required_role == "rhob":
+        input_kms = _to_gcc(raw_input, den_unit)   # stays g/cc; fn expects g/cc
+    else:
+        input_kms = raw_input   # Rt: no conversion
+
+    # ── Apply equation ────────────────────────────────────────────────────────
+    pred_kms = fn(input_kms)
+
+    # ── Convert output to user-chosen unit ───────────────────────────────────
+    if out_tag in ("Vp", "Vs"):          # velocity output
+        pred_out = _from_kms(pred_kms, out_unit)
+        unit_lbl = _unit_label(out_unit)
+    else:
+        pred_out = pred_kms              # density — Gardner returns km/s for Vp
+        unit_lbl = "km/s"
+
+    # Column names
+    pred_col = f"{out_tag}_pred_{unit_lbl.replace('/', '_').replace(' ', '_')}"
     unc_col  = f"{out_tag}_uncertainty"
 
-    df_upd[pred_col] = fn(df_upd[in_col])
-    df_upd[unc_col]  = df_upd[pred_col].abs() * unc_frac
+    df_upd[pred_col] = pred_out
+    df_upd[unc_col]  = pred_out.abs() * unc_frac
+
+    # ── Also store km/s version for cross-method consistency ─────────────────
+    kms_col = f"{out_tag}_pred_kms"
+    if out_unit != "km/s":
+        df_upd[kms_col] = pred_kms
 
     short = method.split("—")[0].strip()
-    st.success(f"✅ **{short}** → `{pred_col}` saved to dataset.")
+    st.success(
+        f"✅ **{short}** → `{pred_col}` [{unit_lbl}] saved to dataset."
+        + (f"  `{kms_col}` [km/s] also saved." if out_unit != "km/s" else "")
+    )
     st.session_state.df = df_upd
 
-    # Display results
+    # ── Display unit-conversion summary ───────────────────────────────────────
+    if required_role in _NEEDS_VP_UNIT and input_unit == "µs/ft (DT)":
+        with st.expander("📐 Unit conversion details", expanded=False):
+            st.markdown(f"""
+| Step | Expression | Value (example at median DT) |
+|------|-----------|-------------------------------|
+| Input DT | `{raw_input.median():.2f}` µs/ft | — |
+| → m/s | `Vp = 10⁶ × 0.3048 / DT` | `{(1e6 * 0.3048 / raw_input.median()):.1f}` m/s |
+| → km/s | `÷ 1000` | `{(1e6 * 0.3048 / raw_input.median() / 1000):.3f}` km/s |
+| Equation applied | {method.split('—')[1].strip()} | — |
+| Output unit | {unit_lbl} | — |
+""")
+
+    # ── Display results ───────────────────────────────────────────────────────
     show_results(
         df_upd, pred_col,
         true_col=true_map.get(out_tag),
-        label=out_tag,
+        label=f"{out_tag} [{unit_lbl}]",
         model_name=short,
         unc_col=unc_col,
         key_prefix="conv",
