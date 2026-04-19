@@ -24,23 +24,21 @@ from __future__ import annotations
 import streamlit as st
 import pandas as pd
 
-from dg_conventional   import render as _render_conv
-from dg_unconventional import render_ml, render_dl
-from dg_comparison     import render as _render_cmp
+from dg_conventional import render as _render_conv
+from dg_unconventional import render_dl
+from dg_comparison import render as _render_cmp
 
 
 # ── Approach registry ─────────────────────────────────────────────────────────
 
 _APPROACHES = [
     "🔵  Conventional Methods",
-    "🔴  Machine Learning",
     "🔴  Deep Learning",
     "📊  Comparison",
 ]
 
 _DISPATCH = {
     "🔵  Conventional Methods": _render_conv,
-    "🔴  Machine Learning":     render_ml,
     "🔴  Deep Learning":        render_dl,
     "📊  Comparison":           _render_cmp,
 }
@@ -54,11 +52,13 @@ def render(df: pd.DataFrame) -> None:
     st.title("🤖 Missing P- & S-Sonic Data Generation")
 
     st.info(
-        "**Objective:** Predict missing **Vp** (P-wave) and **Vs** (S-wave) logs "
-        "from available well-log curves using conventional empirical equations or "
-        "non-conventional ML / DL models.\n\n"
-        "Predictions are stored as `Vp_pred`, `Vs_pred`, "
-        "`Vp_uncertainty`, `Vs_uncertainty` and persist across all pages."
+        "**Objective:** Predict missing **Vp (P-wave sonic logs)** using:\n\n"
+        "• **Conventional methods** (empirical equations)\n"
+        "• **Deep Learning (CNN-BiLSTM)** using a pre-trained model\n\n"
+        "Then compare all predictions using statistical metrics.\n\n"
+        "**Outputs:**\n"
+        "- `Vp_pred`\n"
+        "- `Vp_uncertainty`\n"
     )
 
     # Single source of truth — radio key IS the session_state value.
