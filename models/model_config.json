@@ -1,1 +1,0 @@
-{"input_cols": ["GR", "RHOB", "TNPH"], "target_col": "DT", "n_features": 3, "dt_unit": "\u03bcs/ft"}

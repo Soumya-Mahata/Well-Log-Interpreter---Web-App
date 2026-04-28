@@ -33,20 +33,20 @@ from dg_comparison import render as _render_cmp
 
 _APPROACHES = [
     "🔵  Conventional Methods",
-    "🔴  Deep Learning",
+    "🔴  Unconventional Methods",
     "📊  Comparison",
 ]
 
 _DISPATCH = {
     "🔵  Conventional Methods": _render_conv,
-    "🔴  Deep Learning":        render_dl,
+    "🔴  Unconventional Methods":        render_dl,
     "📊  Comparison":           _render_cmp,
 }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # PUBLIC ENTRY POINT
-# ═════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 
 def render(df: pd.DataFrame) -> None:
     st.title("🤖 Missing P- & S-Sonic Data Generation")
@@ -54,7 +54,7 @@ def render(df: pd.DataFrame) -> None:
     st.info(
         "**Objective:** Predict missing **Vp (P-wave sonic logs)** using:\n\n"
         "• **Conventional methods** (empirical equations)\n"
-        "• **Deep Learning (CNN-BiLSTM)** using a pre-trained model\n\n"
+        "• **Unconventional Methods (CNN-BiLSTM)** using a pre-trained model\n\n"
         "Then compare all predictions using statistical metrics.\n\n"
         "**Outputs:**\n"
         "- `Vp_pred`\n"
