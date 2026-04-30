@@ -37,7 +37,7 @@ Each tab/page is a separate module following a consistent pattern:
 - `data_gen.py` — Missing sonic data generation (orchestrator module).
   - `dg_utils.py` — Shared helpers for data generation workflow.
   - `dg_conventional.py` — Physics-based empirical methods (Gardner, Castagna, Smith, Brocher, Carroll).
-  - `dg_unconventional.py` — ML/DL models (Regression, Decision Tree, XGBoost, ANN, CNN, BiLSTM, CNN-BiLSTM).
+  - `dg_unconventional.py` — ML/DL models (XGBoost, Random Forest, CNN-BiLSTM with sliding-window sequences).
   - `dg_comparison.py` — Metrics comparison between methods.
 - `train_models.py` — Training scripts for all ML/DL models. Feature engineering via `build_features()`.
 
@@ -46,9 +46,11 @@ Each tab/page is a separate module following a consistent pattern:
 2. Computed columns (VSH, PHID, PHIN, PHIT, PHIE, SW, SH, PAY_FLAG, CLUSTER, M_LIT, N_LIT, RHOMAA, DTMAA, UMAA) are stored in `st.session_state.df` and persist across navigation.
 
 ### Model Files
-- `models/model_config.json` — Model configuration (input columns, target, feature count)
-- `models/*.pkl` — Trained sklearn/PyTorch models (wrapped via `_TorchWrapper` for sklearn-compatible predict)
-- `models/cnn_bilstm_sonic.h5` — Pre-trained deep learning model
+- `models/*.pkl` — 6 trained model bundles (3 models × 2 targets: DTC, DTS)
+  - `xgboost_{dtc,dts}.pkl`       — dict bundle: {model, scaler_X, imputer, feature_cols}
+  - `random_forest_{dtc,dts}.pkl` — dict bundle: same format as XGBoost
+  - `cnn_bilstm_{dtc,dts}.pkl`    — TorchWrapper: handles seq-window, scaler, imputer internally
+- Features: `[Vsh, RHOB, NPHI, RT]` — GR→Vsh (p5-p95 per-well), RT→log10(RT) (both transforms in backend)
 
 ### Key Conventions
 - All widget keys are prefixed by module (e.g., `lit_`, `por_`, `fl_`, `res_`, `qc_`, `dg_`) to avoid Streamlit key collisions.

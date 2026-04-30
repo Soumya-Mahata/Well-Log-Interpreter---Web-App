@@ -16,5 +16,5 @@ scipy>=1.11.0
 # ── Visualisation extras ─────────────────────────────────────────────────────
 matplotlib>=3.8.0
 
-# ── Optional: PyTorch (only needed if your .pkl files wrap a PyTorch model)
-# torch>=2.0.0
+# ── Optional: PyTorch (needed for CNN-BiLSTM .pkl files)
+torch>=2.0.0
