@@ -104,10 +104,19 @@ def plotly_depth_track(df: pd.DataFrame,
                        xlabel: str) -> go.Figure:
     """Multi-curve depth track (y = DEPTH, x = log value, inverted y-axis)."""
     fig = go.Figure()
+
+    # Resolve depth axis — prefer DEPTH column, fall back to index
+    if "DEPTH" in df.columns:
+        depth_vals = df["DEPTH"]
+    elif df.index.name in ("DEPTH", "DEPT", "MD", "TVD"):
+        depth_vals = df.index
+    else:
+        depth_vals = pd.RangeIndex(len(df))
+
     for curve, label, color in zip(curves, labels, colors):
         if curve in df.columns:
             fig.add_trace(go.Scatter(
-                x=df[curve], y=df["DEPTH"],
+                x=df[curve], y=depth_vals,
                 mode="lines", name=label,
                 line=dict(color=color, width=1.6),
                 hovertemplate=(
@@ -131,6 +140,20 @@ def plotly_scatter(true: np.ndarray, pred: np.ndarray,
     """True vs Predicted scatter with 1:1 line and R² / RMSE in title."""
     mask = ~(np.isnan(true) | np.isnan(pred))
     t, p = true[mask], pred[mask]
+
+    # Guard: if no overlapping valid rows exist, return an informative empty figure
+    if len(t) == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"{model_name} — {label}<br><sup>No overlapping true/pred values</sup>",
+            xaxis_title=f"True {label}", yaxis_title=f"Predicted {label}",
+            height=380, margin=dict(l=60, r=20, t=70, b=40),
+        )
+        fig.add_annotation(text="No overlapping ground-truth and prediction rows",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(size=13, color="grey"))
+        return fig
+
     lo, hi = min(t.min(), p.min()), max(t.max(), p.max())
     m = safe_metric(true, pred)
     fig = go.Figure()
@@ -159,7 +182,21 @@ def plotly_residual_hist(true: np.ndarray, pred: np.ndarray,
                          label: str) -> go.Figure:
     """Residual (Pred − True) histogram."""
     mask = ~(np.isnan(true) | np.isnan(pred))
-    err = pred[mask] - true[mask]
+    err  = pred[mask] - true[mask]
+
+    # Guard: no overlapping rows
+    if len(err) == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"Residual Distribution — {label}",
+            xaxis_title=f"Pred − True  [{label}]", yaxis_title="Count",
+            height=380, margin=dict(l=60, r=20, t=70, b=40),
+        )
+        fig.add_annotation(text="No overlapping ground-truth and prediction rows",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(size=13, color="grey"))
+        return fig
+
     fig = go.Figure(go.Histogram(
         x=err, nbinsx=60, marker_color="#1976D2", opacity=0.8,
         hovertemplate="Residual: %{x:.4f}<br>Count: %{y}<extra></extra>",
@@ -204,7 +241,7 @@ def plotly_uncertainty_band(df: pd.DataFrame,
     """Depth track with ±1σ shaded uncertainty band."""
     unc   = df[unc_col].values.astype(float)
     pred  = df[pred_col].values.astype(float)
-    depth = df["DEPTH"].values
+    depth = df["DEPTH"].values if "DEPTH" in df.columns else np.arange(len(df))
     fig = go.Figure()
     # Band
     fig.add_trace(go.Scatter(
@@ -280,20 +317,29 @@ def show_results(df: pd.DataFrame,
             key=f"{key_prefix}_depth_{pred_col}_{label}",
         )
 
-    # Scatter + residual
+    # Scatter + residual — only render if there are overlapping valid rows
     if ta is not None and pa is not None:
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            st.plotly_chart(
-                plotly_scatter(ta, pa, label, model_name or pred_col),
-                use_container_width=True,
-                key=f"{key_prefix}_sc_{pred_col}_{label}",
-            )
-        with sc2:
-            st.plotly_chart(
-                plotly_residual_hist(ta, pa, label),
-                use_container_width=True,
-                key=f"{key_prefix}_res_{pred_col}_{label}",
+        overlap_mask = ~(np.isnan(ta) | np.isnan(pa))
+        if overlap_mask.sum() >= 2:
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                st.plotly_chart(
+                    plotly_scatter(ta, pa, label, model_name or pred_col),
+                    use_container_width=True,
+                    key=f"{key_prefix}_sc_{pred_col}_{label}",
+                )
+            with sc2:
+                st.plotly_chart(
+                    plotly_residual_hist(ta, pa, label),
+                    use_container_width=True,
+                    key=f"{key_prefix}_res_{pred_col}_{label}",
+                )
+        else:
+            st.info(
+                "Scatter plot unavailable — no depth rows have both a "
+                "ground-truth value and a prediction simultaneously. "
+                "This can happen when the ground-truth log covers different "
+                "depth intervals than the prediction."
             )
 
     # Uncertainty band (collapsible)

@@ -49,6 +49,17 @@ from dg_utils import (
     show_results,
 )
 
+# TorchWrapper and CNNBiLSTMModel are imported from torch_models.py so that
+# pickle resolves the class as  torch_models.TorchWrapper  both when the .pkl
+# is saved in Colab and when it is loaded here in Streamlit.
+# Without this shared module, pickle raises:
+#   "Can't get attribute 'TorchWrapper' on <module 'main' from '...main.py'>"
+try:
+    from torch_models import TorchWrapper, CNNBiLSTMModel  # noqa: F401
+except ImportError:
+    TorchWrapper   = None  # type: ignore  — CNN-BiLSTM will error at load time
+    CNNBiLSTMModel = None  # type: ignore
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS  (must mirror sonic_training_colab.ipynb)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +148,7 @@ def _engineer_features(
         else:
             work[log] = np.nan
 
-    # Compute Vsh from GR  (p5–p95 normalisation, clipped 0–1)
+    # Compute Vsh from GR  (p5–p95 per-well normalisation, clipped 0–1)
     gr = work["GR"]
     valid_gr = gr.dropna()
     if len(valid_gr) < 2:
@@ -148,17 +159,12 @@ def _engineer_features(
         denom   = (gr_max - gr_min) if (gr_max - gr_min) != 0 else 1.0
         work["Vsh"] = ((gr - gr_min) / denom).clip(0.0, 1.0)
 
-    # Compute RT_log safely
-    rt = work["RT"]
+    # Compute RT_log = log10(RT) — linearises the 4-decade resistivity range
+    # clip(0.01) guards against zero / negative sentinel values
+    rt = work["RT"].clip(lower=0.01)
+    work["RT_log"] = np.log10(rt)
 
-    if rt.notna().sum() < 2:
-        work["RT_log"] = np.nan
-    else:
-        rt_safe = rt.copy()
-        rt_safe[rt_safe <= 0] = np.nan
-        work["RT_log"] = np.log10(rt_safe)
-
-    # DL and ML share the same feature set — no DEPTH_norm needed
+    # All models (ML and DL) use the same 5-feature set
     feat_list = list(_DL_FEATURES) if is_dl else list(_ML_FEATURES)
     X_df  = work[feat_list]
     mask  = ~X_df.isnull().any(axis=1).values
@@ -339,6 +345,18 @@ def render_dl(df: pd.DataFrame) -> None:
         return
 
     df_work = st.session_state.df.copy()
+
+    # Ensure DEPTH is a proper column (lasio sometimes leaves it as index)
+    if "DEPTH" not in df_work.columns:
+        if df_work.index.name in ("DEPTH", "DEPT", "MD", "TVD"):
+            df_work = df_work.reset_index()
+            df_work.rename(columns={df_work.columns[0]: "DEPTH"}, inplace=True)
+        else:
+            df_work.insert(0, "DEPTH", np.arange(len(df_work), dtype=float))
+
+    # Sort by depth so depth-track lines are continuous, not scrambled
+    if "DEPTH" in df_work.columns:
+        df_work = df_work.sort_values("DEPTH").reset_index(drop=True)
 
     with st.spinner("Engineering features…"):
         try:
