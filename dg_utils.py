@@ -102,7 +102,9 @@ def plotly_depth_track(df: pd.DataFrame,
                        colors: list[str],
                        title: str,
                        xlabel: str) -> go.Figure:
-    """Multi-curve depth track (y = DEPTH, x = log value, inverted y-axis)."""
+    """Multi-curve depth track (y = DEPTH, x = log value, inverted y-axis).
+    Sonic/DT logs automatically get an inverted x-axis (140→40 µs/ft).
+    """
     fig = go.Figure()
 
     # Resolve depth axis — prefer DEPTH column, fall back to index
@@ -124,8 +126,17 @@ def plotly_depth_track(df: pd.DataFrame,
                     "<br>Depth: %{y:.2f}<extra></extra>"
                 ),
             ))
+
+    # Detect if this is a sonic/DT log (µs/ft) → invert x-axis 140→40
+    _sonic_keywords = ("DT", "DTCO", "DTSM", "DTS", "AC", "µs", "us/ft", "sonic")
+    _is_sonic = any(k.upper() in xlabel.upper() or k.upper() in title.upper()
+                    for k in _sonic_keywords)
+
     fig.update_yaxes(autorange="reversed", title="Depth")
-    fig.update_xaxes(title=xlabel)
+    if _is_sonic:
+        fig.update_xaxes(title=xlabel, range=[140, 40])
+    else:
+        fig.update_xaxes(title=xlabel)
     fig.update_layout(
         title=title, height=520, hovermode="y unified",
         legend=dict(orientation="h", yanchor="bottom",

@@ -213,57 +213,148 @@ def plot_outlier_flags(df, curve, mask, depth_col="DEPTH", log_scale=False):
     return fig
 
 
+def _hex_to_rgba(hex_color: str, alpha: float = 0.6) -> str:
+    """Convert a #RRGGBB hex color to an rgba() string with given alpha."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def plot_hole_quality(df, cali_col, bit_size, hq, depth_col="DEPTH"):
+    """
+    Hole quality track — mirrors the notebook exactly:
+      Bad Hole     : |CALI − bit_size| > 2  → salmon
+      Moderate Hole: 1 < |diff| ≤ 2         → khaki
+      Good Hole    : |diff| ≤ 1             → pale green
+    Fill is always *between* the caliper value and the bit-size line.
+    """
     STATUS_COLOR = {
-        "Washout":  "#C62828",
-        "In-Gauge": "#1B5E20",
-        "Mudcake":  "#1565C0",
-        "No CALI":  "#757575",
+        "Bad Hole":      "#E57373",   # salmon
+        "Moderate Hole": "#FFF176",   # khaki
+        "Good Hole":     "#A5D6A7",   # pale green
     }
-    fig    = go.Figure()
-    depth  = df[depth_col].values
-    cali   = df[cali_col].values
+
+    depth  = df[depth_col].values.astype(float)
+    cali   = df[cali_col].values.astype(float)
     hq_arr = hq.values
 
-    for status, color in STATUS_COLOR.items():
-        sel = hq_arr == status
+    x_lo = max(4.0, float(np.nanmin(cali)) * 0.88)
+    x_hi = max(float(np.nanmax(cali)), bit_size * 1.30) * 1.04
+
+    fig = go.Figure()
+
+    # ── Fill traces per condition ─────────────────────────────────────────────
+    # Strategy: split each status into contiguous runs, build one closed polygon
+    # per run (so NaN gaps in the middle don't corrupt the shape).
+    legend_added: set = set()
+
+    for status, fill_color in STATUS_COLOR.items():
+        sel = (hq_arr == status)
         if not sel.any():
             continue
-        fig.add_trace(go.Scatter(
-            x=cali[sel], y=depth[sel], mode="markers", name=status,
-            marker=dict(color=color, size=5, opacity=0.80, symbol="square"),
-        ))
 
+        # Find contiguous runs of True in `sel`
+        indices = np.where(sel)[0]
+        if len(indices) == 0:
+            continue
+
+        # Group into contiguous blocks
+        runs, run = [], [indices[0]]
+        for idx in indices[1:]:
+            if idx == run[-1] + 1:
+                run.append(idx)
+            else:
+                runs.append(run)
+                run = [idx]
+        runs.append(run)
+
+        show_leg = status not in legend_added
+        legend_added.add(status)
+
+        for ri, run_idx in enumerate(runs):
+            d_run    = depth[run_idx]
+            cali_run = cali[run_idx]
+
+            # Closed polygon: go down along bit_size, back up along cali
+            x_poly = np.concatenate([
+                np.full(len(d_run), bit_size),   # left edge: bit_size
+                cali_run[::-1],                   # right edge: caliper (reversed)
+            ])
+            y_poly = np.concatenate([d_run, d_run[::-1]])
+
+            fig.add_trace(go.Scatter(
+                x=x_poly, y=y_poly,
+                fill="toself",
+                fillcolor=_hex_to_rgba(fill_color, 0.65),
+                line=dict(width=0),
+                mode="none",
+                name=status,
+                showlegend=(show_leg and ri == 0),
+                legendgroup=status,
+                hoverinfo="skip",
+            ))
+
+    # ── Bit-size reference line ───────────────────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=cali, y=depth, mode="lines", name="Caliper",
-        line=dict(color="#212121", width=2.0),
+        x=np.full(len(depth), bit_size), y=depth,
+        mode="lines", name=f"Bit Size ({bit_size}\")",
+        line=dict(color="#1565C0", width=2.0, dash="dash"),
+        hoverinfo="skip",
     ))
 
-    x_lo = min(float(np.nanmin(cali)), bit_size) * 0.90
-    x_hi = max(float(np.nanmax(cali)), bit_size * 1.15) * 1.05
+    # ── Caliper line (solid black, on top) ───────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=cali, y=depth, mode="lines", name="Caliper",
+        line=dict(color="#212121", width=1.8),
+        hovertemplate=f"Depth: %{{y:.1f}}<br>{cali_col}: %{{x:.2f}} in<extra></extra>",
+    ))
 
-    fig.add_vline(
-        x=bit_size,
-        line=dict(color="#E65100", width=2, dash="dash"),
-        annotation_text=f'<b>Bit {bit_size}"</b>',
-        annotation_font=dict(color="#E65100", size=11),
-        annotation_bgcolor="rgba(255,255,255,0.88)",
-        annotation_bordercolor="#E65100",
-        annotation_position="top left",
-    )
+    # 110 % limit dotted line
     fig.add_vline(
         x=bit_size * 1.10,
-        line=dict(color="#C62828", width=1.5, dash="dot"),
-        annotation_text="<b>Washout limit</b>",
-        annotation_font=dict(color="#C62828", size=10),
-        annotation_bgcolor="rgba(255,255,255,0.88)",
+        line=dict(color="#C62828", width=1.2, dash="dot"),
+        annotation_text="<b>110 % limit</b>",
+        annotation_font=dict(color="#C62828", size=9),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
         annotation_bordercolor="#C62828",
         annotation_position="top right",
     )
-    fig.update_xaxes(**_xax(f"Caliper ({cali_col})"), range=[x_lo, x_hi])
-    fig.update_yaxes(**_DEPTH_AX)
-    fig.update_layout(**_base_layout("Hole Quality — Caliper vs Bit Size"))
-    fig.update_layout(plot_bgcolor="#FAFAFA")   # slight off-white bg for caliper track
+
+    fig.update_xaxes(
+        title_text=f"{cali_col} (in)",
+        title_font=dict(size=12, color="#212121"),
+        tickfont=dict(color="#212121", size=10),
+        range=[x_lo, x_hi],
+        showgrid=True, gridcolor="#e0e0e0",
+        side="top",
+    )
+    fig.update_yaxes(
+        autorange="reversed",
+        title_text="Depth (m)",
+        title_font=dict(size=12, color="#212121"),
+        tickfont=dict(color="#212121", size=10),
+        showgrid=True, gridcolor="#e0e0e0",
+    )
+    fig.update_layout(
+        title=dict(
+            text="<b>Hole Quality — Caliper vs Bit Size</b>",
+            font=dict(size=14, color="#0D2B5E"),
+            x=0, xanchor="left",
+        ),
+        height=750,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(
+            orientation="v",
+            yanchor="middle", y=0.5,
+            xanchor="left",   x=1.01,
+            bgcolor="rgba(255,255,255,0.95)",
+            bordercolor="#aaaaaa", borderwidth=1,
+            font=dict(color="#212121", size=11),
+        ),
+        margin=dict(l=65, r=160, t=70, b=55),
+        hovermode="y unified",
+    )
     return fig
 
 
@@ -271,7 +362,7 @@ def plot_hole_quality(df, cali_col, bit_size, hq, depth_col="DEPTH"):
 # CROSSPLOTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_nphi_rhob(df, nphi_col, rhob_col, color_col=None, show_lines=True):
+def plot_nphi_rhob(df, nphi_col, rhob_col, color_col=None, show_lines=True, colorscale="Viridis_r"):
     nphi = df[nphi_col].copy()
     if nphi.dropna().median() > 1.0:
         nphi = nphi / 100.0
@@ -281,7 +372,7 @@ def plot_nphi_rhob(df, nphi_col, rhob_col, color_col=None, show_lines=True):
     if color_col and color_col in df.columns:
         pdf[color_col] = df[color_col].values
         fig = px.scatter(pdf, x="NPHI_frac", y=rhob_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col,
                                  "NPHI_frac": "NPHI (v/v)", rhob_col: "RHOB (g/cc)"})
         _fix_cb(fig, color_col)
@@ -311,7 +402,7 @@ def plot_nphi_rhob(df, nphi_col, rhob_col, color_col=None, show_lines=True):
     return fig
 
 
-def plot_nphi_dt(df, nphi_col, dt_col, color_col=None, show_lines=True):
+def plot_nphi_dt(df, nphi_col, dt_col, color_col=None, show_lines=True, colorscale="Viridis_r"):
     nphi = df[nphi_col].copy()
     if nphi.dropna().median() > 1.0:
         nphi = nphi / 100.0
@@ -321,7 +412,7 @@ def plot_nphi_dt(df, nphi_col, dt_col, color_col=None, show_lines=True):
     if color_col and color_col in df.columns:
         pdf[color_col] = df[color_col].values
         fig = px.scatter(pdf, x="NPHI_frac", y=dt_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col,
                                  "NPHI_frac": "NPHI (v/v)", dt_col: "DT (µs/ft)"})
         _fix_cb(fig, color_col)
@@ -346,16 +437,16 @@ def plot_nphi_dt(df, nphi_col, dt_col, color_col=None, show_lines=True):
         fig.add_annotation(**_label_ann("Shale Zone", x=0.35, y=85, color="#5D4037"))
 
     fig.update_xaxes(**_xax("NPHI (v/v)", range=[-0.02,0.46]))
-    fig.update_yaxes(**_xax("DT (µs/ft)",  range=[40,115]))
+    fig.update_yaxes(**_xax("DT (µs/ft)", range=[140, 40]))
     fig.update_layout(**_base_layout("Neutron–Sonic Crossplot", height=560))
     return fig
 
 
-def plot_rhob_dt(df, rhob_col, dt_col, color_col=None, show_lines=True):
+def plot_rhob_dt(df, rhob_col, dt_col, color_col=None, show_lines=True, colorscale="Viridis_r"):
     if color_col and color_col in df.columns:
         pdf = df[[dt_col, rhob_col, color_col]].copy()
         fig = px.scatter(pdf, x=dt_col, y=rhob_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col,
                                  dt_col: "DT (µs/ft)", rhob_col: "RHOB (g/cc)"})
         _fix_cb(fig, color_col)
@@ -376,18 +467,18 @@ def plot_rhob_dt(df, rhob_col, dt_col, color_col=None, show_lines=True):
                 line=dict(color=clr, width=2.2, dash="dash")))
             fig.add_annotation(**_label_ann(name, x=dt_ma-2, y=rho_ma, color=clr))
 
-    fig.update_xaxes(**_xax("DT (µs/ft)",  range=[40,125]))
+    fig.update_xaxes(**_xax("DT (µs/ft)",  range=[140, 40]))
     fig.update_yaxes(**_xax("RHOB (g/cc)"), autorange=False, range=[3.05,1.80])
     fig.update_layout(**_base_layout("Density–Sonic Crossplot", height=560))
     return fig
 
 
-def plot_mn(df, M_col, N_col, color_col=None):
+def plot_mn(df, M_col, N_col, color_col=None, colorscale="Viridis_r"):
     pdf = df[[N_col, M_col]].dropna()
     if color_col and color_col in df.columns:
         pdf[color_col] = df.loc[pdf.index, color_col]
         fig = px.scatter(pdf, x=N_col, y=M_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col})
         _fix_cb(fig, color_col)
     else:
@@ -413,12 +504,12 @@ def plot_mn(df, M_col, N_col, color_col=None):
     return fig
 
 
-def plot_mid_dt_rho(df, dt_maa_col, rho_maa_col, color_col=None):
+def plot_mid_dt_rho(df, dt_maa_col, rho_maa_col, color_col=None, colorscale="Viridis_r"):
     pdf = df[[dt_maa_col, rho_maa_col]].dropna()
     if color_col and color_col in df.columns:
         pdf[color_col] = df.loc[pdf.index, color_col]
         fig = px.scatter(pdf, x=dt_maa_col, y=rho_maa_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col})
         _fix_cb(fig, color_col)
     else:
@@ -440,12 +531,12 @@ def plot_mid_dt_rho(df, dt_maa_col, rho_maa_col, color_col=None):
     return fig
 
 
-def plot_mid_u_rho(df, u_maa_col, rho_maa_col, color_col=None):
+def plot_mid_u_rho(df, u_maa_col, rho_maa_col, color_col=None, colorscale="Viridis_r"):
     pdf = df[[u_maa_col, rho_maa_col]].dropna()
     if color_col and color_col in df.columns:
         pdf[color_col] = df.loc[pdf.index, color_col]
         fig = px.scatter(pdf, x=u_maa_col, y=rho_maa_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60,
+                         color_continuous_scale=colorscale, opacity=0.60,
                          labels={color_col: color_col})
         _fix_cb(fig, color_col)
     else:
@@ -468,7 +559,7 @@ def plot_mid_u_rho(df, u_maa_col, rho_maa_col, color_col=None):
     return fig
 
 
-def plot_crossplot(df, x_col, y_col, color_col=None, cluster_col=None, title="Crossplot"):
+def plot_crossplot(df, x_col, y_col, color_col=None, cluster_col=None, title="Crossplot", colorscale="Viridis_r"):
     pdf = df[[x_col, y_col]].copy()
     if cluster_col and cluster_col in df.columns:
         pdf["Cluster"] = df[cluster_col].astype(str)
@@ -478,7 +569,7 @@ def plot_crossplot(df, x_col, y_col, color_col=None, cluster_col=None, title="Cr
     elif color_col and color_col in df.columns:
         pdf[color_col] = df[color_col].values
         fig = px.scatter(pdf, x=x_col, y=y_col, color=color_col,
-                         color_continuous_scale="Viridis_r", opacity=0.60, title=title,
+                         color_continuous_scale=colorscale, opacity=0.60, title=title,
                          labels={color_col: color_col})
         _fix_cb(fig, color_col)
     else:
@@ -545,7 +636,8 @@ def plot_porosity(df, depth_col="DEPTH", phid_col=None, phin_col=None,
                                      line=dict(color="#B71C1C",width=2.0,dash="dot")),row=1,col=last)
         fig.update_xaxes(**_xax("Porosity (v/v)"), range=[0,0.50], row=1,col=last)
 
-    fig.update_yaxes(**_DEPTH_AX, row=1, col=1)
+    fig.update_yaxes(**{k: v for k, v in _DEPTH_AX.items() if k != "title_text"},
+                     title_text="Depth (m)", row=1, col=1)
     fig.update_layout(**_base_layout("Porosity Logs", height=750), showlegend=True)
     return fig
 
@@ -706,6 +798,310 @@ def plot_final_interpretation(df, pay_flag, gr_col=None, rt_col=None,
     fig.update_yaxes(**_DEPTH_AX, row=1, col=1)
     fig.update_layout(**_base_layout("Final Interpretation — Composite Log", height=880),
                       showlegend=True)
+    return fig
+
+
+
+def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
+                          nphi_col=None, gr_cutoff=75.0, depth_col="DEPTH",
+                          cali_col=None, bit_size=8.5,
+                          lls_col=None, llm_col=None,
+                          top_depth=None, bottom_depth=None):
+    """
+    Triple Combo Plot — faithful Plotly port of notebook triple_combo_plot().
+
+    Track 1 : GR (limegreen, 0-150) + CALI (black, 6-16) on SEPARATE x-axes
+              GR fill: sand (yellow) / shale (grey) from x=0 to GR curve
+    Track 2 : LLD (navy) / LLM (cyan dashed) / LLS (blue dotted) log 0.2-2000
+    Track 3 : RHOB (red, 1.95-2.95) + NPHI (darkgreen, inverted 0.45→-0.15)
+              Both mapped to NPHI coordinate space; HC fill orange, Shale grey
+    """
+    # ── Depth slice ───────────────────────────────────────────────────────────
+    work = df.copy()
+    if top_depth is not None:
+        work = work[work[depth_col] >= top_depth]
+    if bottom_depth is not None:
+        work = work[work[depth_col] <= bottom_depth]
+    if work.empty:
+        return go.Figure()
+
+    depth  = work[depth_col].values
+    depth_s = work[depth_col]   # Series for Plotly
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Build figure with 3 subplots.
+    # Track 1 needs dual x-axes (GR + CALI) — we handle CALI via xaxis4
+    # which overlays on subplot col=1.
+    # ══════════════════════════════════════════════════════════════════════════
+    fig = make_subplots(
+        rows=1, cols=3, shared_yaxes=True,
+        subplot_titles=["GR + CALI", "Resistivity (Ω·m)", "RHOB & NPHI"],
+        horizontal_spacing=0.07,
+    )
+    _fix_subtitles(fig)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRACK 1 — GR (xaxis1) + CALI (xaxis4 overlay)
+    # Notebook: ax01 xlim(0,150) GR limegreen; ax02 xlim(6,16) CALI black
+    # ══════════════════════════════════════════════════════════════════════════
+    if gr_col and gr_col in work.columns:
+        gr = work[gr_col].values.astype(float)
+
+        # Sand fill: 0 → GR where GR < cutoff (clamp at cutoff)
+        gr_sand  = np.where(gr < gr_cutoff, gr, gr_cutoff)
+        fig.add_trace(go.Scatter(
+            x=gr_sand, y=depth_s, mode="lines",
+            name="Sand Zone",
+            line=dict(width=0, color="rgba(255,235,59,0)"),
+            fill="tozerox", fillcolor="rgba(255,235,59,0.55)",
+            hoverinfo="skip", showlegend=True,
+        ), row=1, col=1)
+
+        # Shale fill: 0 → GR where GR ≥ cutoff
+        gr_shale = np.where(gr >= gr_cutoff, gr, gr_cutoff)
+        fig.add_trace(go.Scatter(
+            x=gr_shale, y=depth_s, mode="lines",
+            name="Shale Zone",
+            line=dict(width=0, color="rgba(128,128,128,0)"),
+            fill="tozerox", fillcolor="rgba(128,128,128,0.50)",
+            hoverinfo="skip", showlegend=True,
+        ), row=1, col=1)
+
+        # GR line (limegreen, lw=1.5)
+        fig.add_trace(go.Scatter(
+            x=gr, y=depth_s, mode="lines", name="GR log",
+            line=dict(color="limegreen", width=1.5),
+            hovertemplate="GR: %{x:.1f} API<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=1)
+
+    # GR x-axis (xaxis1 = subplot col 1 bottom)
+    fig.update_xaxes(
+        title_text="GR (API)",
+        title_font=dict(size=10, color="limegreen"),
+        tickfont=dict(color="limegreen", size=9),
+        range=[0, 250], showgrid=True, gridcolor="#e0e0e0",
+        row=1, col=1,
+    )
+
+    # CALI — separate x-axis overlaying col 1 (xaxis4, plotted on top axis)
+    _cali = cali_col or next(
+        (c for c in work.columns if "CALI" in c.upper() or "HCAL" in c.upper()), None)
+    has_cali = _cali and _cali in work.columns
+
+    if has_cali:
+        # CALI curve on xaxis4
+        fig.add_trace(go.Scatter(
+            x=work[_cali].values, y=depth_s,
+            mode="lines", name="CALI (in)",
+            line=dict(color="black", width=1.2),
+            xaxis="x4",
+            hovertemplate="CALI: %{x:.2f} in<br>Depth: %{y:.1f}<extra></extra>",
+        ))
+        # Bit-size line on xaxis4
+        fig.add_trace(go.Scatter(
+            x=np.full(len(depth), bit_size), y=depth_s,
+            mode="lines", name=f"Bit Size ({bit_size}\")",
+            line=dict(color="navy", width=1.5, dash="dash"),
+            xaxis="x4", hoverinfo="skip",
+        ))
+        # Configure xaxis4 to overlay on yaxis1 (col 1) with range 6-16
+        fig.update_layout(
+            xaxis4=dict(
+                overlaying="x",          # overlay on subplot col-1 x-axis
+                anchor="y",
+                side="top",
+                range=[6, 16],
+                showgrid=False,
+                zeroline=False,
+                title="CALI (in)",
+                title_font=dict(size=10, color="black"),
+                tickfont=dict(color="black", size=9),
+                showline=True,
+                linecolor="black",
+            )
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRACK 2 — Resistivity log scale 0.2–2000
+    # Notebook: LLD navy solid, LLM cyan dashed, LLS blue dotted
+    # ══════════════════════════════════════════════════════════════════════════
+    _lls = lls_col or next(
+        (c for c in work.columns if c.upper() in ("LLS","AT10","AHT10","RLA2")), None)
+    _llm = llm_col or next(
+        (c for c in work.columns if c.upper() in ("LLM","AT30","AHT30","RLA3")), None)
+
+    if rt_col and rt_col in work.columns:
+        fig.add_trace(go.Scatter(
+            x=work[rt_col].values, y=depth_s, mode="lines", name="LLD",
+            line=dict(color="navy", width=2.0),
+            hovertemplate="LLD: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=2)
+    if _llm and _llm in work.columns:
+        fig.add_trace(go.Scatter(
+            x=work[_llm].values, y=depth_s, mode="lines", name="LLM",
+            line=dict(color="cyan", width=1.6, dash="dash"),
+            hovertemplate="LLM: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=2)
+    if _lls and _lls in work.columns:
+        fig.add_trace(go.Scatter(
+            x=work[_lls].values, y=depth_s, mode="lines", name="LLS",
+            line=dict(color="blue", width=1.6, dash="dot"),
+            hovertemplate="LLS: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=2)
+
+    fig.update_xaxes(
+        title_text="Resistivity (Ω·m)",
+        title_font=dict(size=10, color="navy"),
+        tickfont=dict(color="#212121", size=9),
+        type="log", range=[np.log10(0.2), np.log10(2000)],
+        showgrid=True, gridcolor="#e0e0e0",
+        row=1, col=2,
+    )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRACK 3 — RHOB + NPHI crossover fill
+    #
+    # Notebook exact logic:
+    #   ax21: RHOB xlim (1.95, 2.95)
+    #   ax22: NPHI xlim (-0.15, 0.45) then inverted → displayed 0.45 left
+    #   rhob_min, rhob_max = ax21.get_xlim() = (1.95, 2.95)
+    #   nphi_min, nphi_max = ax22.get_xlim() = (-0.15, 0.45)  ← pre-inversion
+    #   rhob_to_nphi = ((rhob - rhob_min)/(rhob_max-rhob_min)) *
+    #                  (nphi_max - nphi_min) + nphi_min
+    #   fill where nphi < rhob_to_nphi → orange (HC)
+    #   fill where nphi > rhob_to_nphi → grey   (Shale)
+    #
+    # In Plotly: both curves plotted in NPHI-coordinate space.
+    # x-axis range = [0.45, -0.15]  (inverted = 0.45 on left, -0.15 on right)
+    # ══════════════════════════════════════════════════════════════════════════
+    has_rhob = rhob_col and rhob_col in work.columns
+    has_nphi = nphi_col and nphi_col in work.columns
+
+    RHOB_MIN, RHOB_MAX       = 1.95, 2.95
+    NPHI_PRE_MIN, NPHI_PRE_MAX = -0.15, 0.45   # pre-inversion limits
+
+    if has_rhob and has_nphi:
+        rhob = work[rhob_col].values.astype(float)
+        nphi = work[nphi_col].values.astype(float)
+        if np.nanmedian(nphi) > 1.0:
+            nphi = nphi / 100.0
+
+        rhob = np.clip(rhob, RHOB_MIN, RHOB_MAX)
+        nphi = np.clip(nphi, NPHI_PRE_MIN - 0.05, NPHI_PRE_MAX + 0.05)
+
+        # Map RHOB to NPHI coordinate space (notebook formula exactly)
+        rhob_to_nphi = (
+            (rhob - RHOB_MIN) / (RHOB_MAX - RHOB_MIN)
+        ) * (NPHI_PRE_MAX - NPHI_PRE_MIN) + NPHI_PRE_MIN
+        # rhob_to_nphi range: [-0.15, 0.45] same coordinate space as nphi
+
+        # ── Contiguous-run fill segments ──────────────────────────────────────
+        def _fill_runs(mask, fc, name):
+            valid = mask & ~np.isnan(nphi) & ~np.isnan(rhob_to_nphi)
+            idx = np.where(valid)[0]
+            if not len(idx):
+                return
+            runs, cur = [], [idx[0]]
+            for i in idx[1:]:
+                if i == cur[-1] + 1:
+                    cur.append(i)
+                else:
+                    runs.append(cur); cur = [i]
+            runs.append(cur)
+            for ri, r in enumerate(runs):
+                d_r  = depth[r]
+                n_r  = nphi[r]
+                rb_r = rhob_to_nphi[r]
+                # Closed polygon: NPHI forward → rhob_to_nphi backward
+                fig.add_trace(go.Scatter(
+                    x=np.concatenate([n_r, rb_r[::-1]]),
+                    y=np.concatenate([d_r, d_r[::-1]]),
+                    fill="toself", fillcolor=fc,
+                    line=dict(width=0), mode="none",
+                    name=name, showlegend=(ri == 0),
+                    legendgroup=name, hoverinfo="skip",
+                ), row=1, col=3)
+
+        _fill_runs(nphi < rhob_to_nphi, "rgba(255,152,0,0.60)",  "HC Zone")
+        _fill_runs(nphi > rhob_to_nphi, "rgba(128,128,128,0.50)", "Shale")
+
+        # NPHI line (darkgreen) — in NPHI coordinate space
+        fig.add_trace(go.Scatter(
+            x=nphi, y=depth_s, mode="lines", name="NPHI",
+            line=dict(color="darkgreen", width=1.8),
+            hovertemplate="NPHI: %{x:.3f} v/v<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=3)
+
+        # RHOB line (red) — mapped into NPHI coordinate space; real value in tooltip
+        fig.add_trace(go.Scatter(
+            x=rhob_to_nphi, y=depth_s, mode="lines", name="RHOB",
+            line=dict(color="red", width=1.8),
+            customdata=rhob,
+            hovertemplate="RHOB: %{customdata:.3f} g/cc<br>Depth: %{y:.1f}<extra></extra>",
+        ), row=1, col=3)
+
+        # x-axis in NPHI space, inverted (0.45 left → -0.15 right)
+        # Dual tick labels: top row = NPHI values, corresponds to RHOB at same position
+        fig.update_xaxes(
+            title_text="← NPHI (v/v)  |  RHOB (g/cc) →",
+            title_font=dict(size=9, color="#333333"),
+            range=[NPHI_PRE_MAX, NPHI_PRE_MIN],   # inverted: 0.45 → -0.15
+            tickvals=[0.45, 0.30, 0.15, 0.00, -0.15],
+            ticktext=["0.45<br>1.95", "0.30<br>2.20",
+                      "0.15<br>2.45", "0.00<br>2.70", "-0.15<br>2.95"],
+            tickfont=dict(size=8, color="#333333"),
+            showgrid=True, gridcolor="#e0e0e0",
+            row=1, col=3,
+        )
+
+    elif has_rhob:
+        rhob = work[rhob_col].values.astype(float)
+        fig.add_trace(go.Scatter(
+            x=rhob, y=depth_s, mode="lines", name="RHOB",
+            line=dict(color="red", width=1.8),
+        ), row=1, col=3)
+        fig.update_xaxes(title_text="RHOB (g/cc)",
+                         range=[RHOB_MIN, RHOB_MAX],
+                         showgrid=True, gridcolor="#e0e0e0",
+                         row=1, col=3)
+    elif has_nphi:
+        nphi = work[nphi_col].values.astype(float)
+        if np.nanmedian(nphi) > 1.0:
+            nphi = nphi / 100.0
+        fig.add_trace(go.Scatter(
+            x=nphi, y=depth_s, mode="lines", name="NPHI",
+            line=dict(color="darkgreen", width=1.8),
+        ), row=1, col=3)
+        fig.update_xaxes(title_text="NPHI (v/v)",
+                         range=[NPHI_PRE_MAX, NPHI_PRE_MIN],
+                         showgrid=True, gridcolor="#e0e0e0",
+                         row=1, col=3)
+
+    # ── Shared depth axis ─────────────────────────────────────────────────────
+    _dax = {k: v for k, v in _DEPTH_AX.items() if k != "title_text"}
+    fig.update_yaxes(**_dax, title_text="Depth (m)", row=1, col=1)
+
+    fig.update_layout(
+        title=dict(
+            text="<b>Triple Combo Plot</b>",
+            font=dict(size=16, color="#0D2B5E"),
+            x=0.5, xanchor="center",
+        ),
+        height=870,
+        margin=dict(l=65, r=175, t=90, b=55),
+        legend=dict(
+            orientation="v",
+            yanchor="middle", y=0.5,
+            xanchor="left",   x=1.01,
+            bgcolor="rgba(255,255,255,0.95)",
+            bordercolor="#aaaaaa", borderwidth=1,
+            font=dict(color="#212121", size=10),
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(color="#212121"),
+        showlegend=True,
+    )
     return fig
 
 

@@ -404,20 +404,11 @@ def render_dl(df: pd.DataFrame) -> None:
                 "Verify model file and feature column mapping."
             )
 
-    # Metrics
-    if true_col and true_col in df_work.columns:
-        yt = df_work[true_col].values.astype(float)
-        yp = df_work[pred_col].values.astype(float)
-        ok = ~(np.isnan(yt) | np.isnan(yp))
-        if ok.sum() >= 2:
-            m = safe_metric(yt[ok], yp[ok])
-            mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("RMSE", f"{m['RMSE']:.4f}")
-            mc2.metric("MAE",  f"{m['MAE']:.4f}")
-            mc3.metric("R²",   f"{m['R²']:.4f}")
+    # Metrics (shown inside show_results below — no duplicate here)
 
     show_results(
         df_work, pred_col=pred_col, true_col=true_col,
         label=target_col, model_name=selected_model, unc_col=None,
         key_prefix=f"unc_{model_key}_{target_col.lower()}",
     )
+

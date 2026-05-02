@@ -30,8 +30,10 @@ ENV/
 
 # If you want to keep sample data, comment above and use:
 # data/*
-# !data/sample_data/
-models/*
+!data/sample_data/*.las
+!data/sample_data/*.LAS
+# models/*
+# !models/*.pkl
 
 # -----------------------------------
 # Jupyter Notebook

@@ -175,18 +175,18 @@ def smooth_log(series, method="moving_average", window=5):
 def hole_quality_check(df, cali_col, bit_size):
     """
     Compare CALI to bit size.
-    Washout : CALI > 110 % of bit   → log quality degraded
-    In-Gauge: 95 % ≤ CALI ≤ 110 %  → good conditions
-    Mudcake : CALI <  95 % of bit   → tight / mudcake build-up
+    Bad Hole : CALI > 110 % of bit  → log quality degraded (washout)
+    Moderate : 100 % < CALI ≤ 110 % of bit  → use with caution
+    Good Hole: CALI ≤ 100 % of bit  → in-gauge, high confidence
     """
     if cali_col not in df.columns:
         return pd.Series(["No CALI"] * len(df), index=df.index)
     cali = df[cali_col]
     result = np.select(
         [cali > bit_size * 1.10,
-         cali < bit_size * 0.95],
-        ["Washout", "Mudcake"],
-        default="In-Gauge"
+         cali > bit_size * 1.00],
+        ["Bad Hole", "Moderate Hole"],
+        default="Good Hole"
     )
     return pd.Series(result, index=df.index)
 
