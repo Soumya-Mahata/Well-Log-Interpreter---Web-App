@@ -38,6 +38,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import streamlit as st
+from huggingface_hub import hf_hub_download
 
 warnings.filterwarnings("ignore")
 
@@ -185,22 +186,22 @@ def _engineer_features(
 # MODEL LOADING
 # ─────────────────────────────────────────────────────────────────────────────
 
+@st.cache_resource
 def load_model(model_key: str, target: str):
     fname = f"{model_key}_{target.lower()}.pkl"
-    path  = os.path.join(_MODEL_DIR, fname)
-
-    if not os.path.isfile(path):
-        st.warning(
-            f"Model file not found: `models/{fname}`\n\n"
-            "Train with the Colab notebook and place the `.pkl` in `models/`."
-        )
-        return None
 
     try:
+        # Download from Hugging Face Model Hub
+        path = hf_hub_download(
+            repo_id="S-Mahata/petrophysics-models",
+            filename=fname
+        )
+
         with open(path, "rb") as fh:
             return pickle.load(fh)
+
     except Exception as exc:
-        st.error(f"Failed to load `{fname}`: {exc}")
+        st.error(f"Failed to load model `{fname}` from Hugging Face: {exc}")
         return None
 
 
@@ -259,15 +260,7 @@ def render_dl(df: pd.DataFrame) -> None:
 
     # Per-model output column name — avoids overwriting between models
     pred_col = f"{target_col}_{model_key}_pred"
-
-    _fname = f"{model_key}_{target_col.lower()}.pkl"
-    _fpath = os.path.join(_MODEL_DIR, _fname)
-    if os.path.isfile(_fpath):
-        st.success(f"Model file found: `models/{_fname}`")
-    else:
-        st.warning(f"`models/{_fname}` not found. Run the Colab training notebook.")
-    st.divider()
-
+    
     # STEP 3 — Theory
     st.markdown("### Step 3 · Model Theory")
     with st.expander(f"About {selected_model}", expanded=False):
