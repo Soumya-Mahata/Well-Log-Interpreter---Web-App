@@ -12,6 +12,7 @@ Run:
 import warnings
 warnings.filterwarnings("ignore")
 
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -54,7 +55,8 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SS_DEFAULTS = {
-    # ── Data objects ──────────────────────────────────────
+    # ── App state ─────────────────────────────────────────
+    "app_loaded":     False,  # splash screen shown once
     "las":            None,   # lasio.LASFile
     "raw_df":         None,   # df as loaded, NEVER modified
     "df_full":        None,   # raw_df after rename (full depth range)
@@ -101,12 +103,111 @@ for _k, _v in _SS_DEFAULTS.items():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SPLASH SCREEN — shown once on first load
+# ─────────────────────────────────────────────────────────────────────────────
+if not st.session_state.app_loaded:
+    import os as _splash_os
+    import base64 as _b64
+
+    # Build optional base64 image embed so it shows inside the HTML block
+    _p1 = _splash_os.path.join("figures", "opening_img.png")
+    _img_tag = ""
+    if _splash_os.path.isfile(_p1):
+        with open(_p1, "rb") as _f:
+            _b64_img = _b64.b64encode(_f.read()).decode()
+        _img_tag = (
+            f'<img src="data:image/png;base64,{_b64_img}" '
+            f'style="max-width:520px; width:90%; border-radius:12px; '
+            f'margin-top:24px; box-shadow:0 4px 24px rgba(0,0,0,0.25);" '
+            f'alt="Petrophysics Platform"/>'
+        )
+
+    st.markdown(f"""
+        <style>
+        /* Hide sidebar and top toolbar during splash */
+        [data-testid="stSidebar"] {{display: none !important;}}
+        [data-testid="stToolbar"]  {{display: none !important;}}
+        header {{visibility: hidden;}}
+
+        .splash-outer {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            text-align: center;
+            padding: 32px 16px;
+        }}
+        .splash-title {{
+            font-size: 3.2rem;
+            font-weight: 800;
+            color: #1f77b4;
+            letter-spacing: 1px;
+            animation: pulse 1.8s ease-in-out infinite;
+            margin: 0;
+        }}
+        .splash-sub {{
+            font-size: 1.15rem;
+            color: #555;
+            margin-top: 10px;
+            animation: fadeIn 2s ease-in-out forwards;
+        }}
+        .splash-bar-wrap {{
+            width: 320px;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 28px;
+            overflow: hidden;
+        }}
+        .splash-bar {{
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #1f77b4, #17becf);
+            border-radius: 4px;
+            animation: loadbar 2.4s ease-in-out forwards;
+        }}
+        @keyframes pulse {{
+            0%   {{ transform: scale(0.97); opacity: 0.85; }}
+            50%  {{ transform: scale(1.03); opacity: 1.00; }}
+            100% {{ transform: scale(0.97); opacity: 0.85; }}
+        }}
+        @keyframes fadeIn {{
+            0%   {{ opacity: 0; transform: translateY(8px); }}
+            100% {{ opacity: 1; transform: translateY(0); }}
+        }}
+        @keyframes loadbar {{
+            0%   {{ width: 0%;   }}
+            60%  {{ width: 75%;  }}
+            100% {{ width: 100%; }}
+        }}
+        </style>
+
+        <div class="splash-outer">
+            <div class="splash-title">🛢️ Petrophysics Platform</div>
+            <div class="splash-sub">Academic-Grade Petrophysical Interpretation Web App</div>
+            {_img_tag}
+            <div class="splash-bar-wrap">
+                <div class="splash-bar"></div>
+            </div>
+            <div class="splash-sub" style="margin-top:14px; font-size:0.95rem; color:#888;">
+                Loading modules…
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    time.sleep(2.8)
+    st.session_state.app_loaded = True
+    st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/oil-rig.png", width=80)
     st.title("Petrophysics Platform")
-    st.caption("Academic-Grade Well Log Interpretation")
+    st.caption("Petrophysical Interpretation Web App")
     st.divider()
 
     page = st.radio(
@@ -175,7 +276,31 @@ def _apply_depth_filter():
 
 if page == "📂 Data Loading & QC":
 
+    import os as _os
+    # ── Project reference image (centred) ─────────────────
+    _p1 = _os.path.join("figures", "workflow.png")
+    if _os.path.isfile(_p1):
+        _ic1, _ic2, _ic3 = st.columns([1, 2, 1])
+        _ic2.image(
+            _p1,
+            caption="🛢️ Petrophysics Platform — Reference Workflow",
+            use_container_width=True,
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+    
     st.title("📂 Data Loading & Quality Control")
+
+    # ── Hero / Feature Showcase ───────────────────────────────────────────────
+    if st.session_state.df is None:
+        st.markdown(
+            "<p style='font-size:1.05rem;color:#4a5568;margin-bottom:1rem;'>"
+            "Upload a LAS file to begin petrophysical analysis. "
+            "The platform supports full QC, lithology identification, porosity "
+            "estimation, fluid analysis, and ML-powered missing log generation."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+    st.divider()
 
     # ── 1. Upload ─────────────────────────────────────────────────────────────
     st.header("1. Upload LAS File")

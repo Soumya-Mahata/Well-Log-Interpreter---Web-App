@@ -243,25 +243,28 @@ def render(df: pd.DataFrame) -> None:
 
     u1, u2, u3 = st.columns(3)
 
-    # Velocity unit for Vp input (used by Castagna Vp→Vs, Brocher, Carroll, Castagna inverse input)
+    # Smart defaults: if curve name contains DT → default to µs/ft
+    def _smart_vel_idx(col_name):
+        if col_name and any(k in col_name.upper() for k in ("DT", "DTCO", "DTSM")):
+            return 2   # µs/ft (DT)
+        return 0       # km/s
+
     vp_unit = u1.selectbox(
         "Vp / DT input unit",
         _VEL_UNITS,
-        index=2 if (auto_vp and any(k in auto_vp.upper() for k in ("DT", "DTCO"))) else 0,
+        index=_smart_vel_idx(auto_vp),
         key="dg_vp_unit",
-        help="Unit of the compressional velocity/slowness curve selected above.",
+        help="Unit of the compressional velocity/slowness curve.",
     )
 
-    # Velocity unit for Vs input (used by Castagna inverse Vs→Vp)
     vs_unit = u2.selectbox(
         "Vs / DTS input unit",
         _VEL_UNITS,
-        index=2 if (auto_vs and any(k in auto_vs.upper() for k in ("DT", "DTS", "DTSM"))) else 0,
+        index=_smart_vel_idx(auto_vs),
         key="dg_vs_unit",
-        help="Unit of the shear velocity/slowness curve selected above.",
+        help="Unit of the shear velocity/slowness curve.",
     )
 
-    # Density unit for RHOB input (Gardner only)
     den_unit = u3.selectbox(
         "RHOB / density unit",
         _DEN_UNITS,
@@ -270,16 +273,15 @@ def render(df: pd.DataFrame) -> None:
         help="Unit of the bulk density curve (Gardner method only).",
     )
 
-    # Output unit selector — for the *predicted* velocity column
+    # Output unit: default to µs/ft when input is DT
+    _active_role_col = {"vp": auto_vp, "vs": auto_vs, "rhob": None, "rt": None}.get(required_role)
+    _out_default = _smart_vel_idx(_active_role_col)
     out_unit = st.selectbox(
         "Predicted output unit",
         _VEL_UNITS,
-        index=0,
+        index=_out_default,
         key="dg_out_unit",
-        help=(
-            "The prediction is always computed in km/s. "
-            "Choose the unit in which the result column is saved to the dataset."
-        ),
+        help="Unit for the saved prediction column.",
     )
 
     # Determine which input unit applies to the active method
@@ -364,23 +366,30 @@ def render(df: pd.DataFrame) -> None:
         pred_out = pred_kms              # density — Gardner returns km/s for Vp
         unit_lbl = "km/s"
 
-    # Column names
-    pred_col = f"{out_tag}_pred_{unit_lbl.replace('/', '_').replace(' ', '_')}"
-    unc_col  = f"{out_tag}_uncertainty"
+    # ── Column names ──────────────────────────────────────────────────────────
+    # Map Vp/Vs output to DTC/DTS so the comparison module finds them.
+    # Format: DTC_<MethodName>_pred  (matches comparison regex)
+    _out_to_dtx = {"Vp": "DTC", "Vs": "DTS"}
+    dtx_prefix  = _out_to_dtx.get(out_tag, out_tag)   # DTC / DTS / fallback
 
-    df_upd[pred_col] = pred_out
-    df_upd[unc_col]  = pred_out.abs() * unc_frac
+    # Sanitise method abbreviation for column name
+    method_abbr = (
+        method.split("(")[0].strip()
+               .split("—")[0].strip()
+               .replace(" ", "_")
+               .replace(".", "")
+    )
+    pred_col = f"{dtx_prefix}_{method_abbr}_pred"
+    unc_col  = f"{dtx_prefix}_{method_abbr}_uncertainty"
 
-    # ── Also store km/s version for cross-method consistency ─────────────────
-    kms_col = f"{out_tag}_pred_kms"
-    if out_unit != "km/s":
-        df_upd[kms_col] = pred_kms
+    # Also save the raw value in the user's chosen unit as a companion column
+    unit_col = f"{dtx_prefix}_{method_abbr}_{unit_lbl.replace('/', '_')}"
+    df_upd[unit_col]  = pred_out          # e.g. in µs/ft
+    df_upd[pred_col]  = pred_out          # same data, discoverable by comparison
+    df_upd[unc_col]   = pred_out.abs() * unc_frac
 
     short = method.split("—")[0].strip()
-    st.success(
-        f"✅ **{short}** → `{pred_col}` [{unit_lbl}] saved to dataset."
-        + (f"  `{kms_col}` [km/s] also saved." if out_unit != "km/s" else "")
-    )
+    st.success(f"✅ **{short}** → `{pred_col}` [{unit_lbl}] saved to dataset.")
     st.session_state.df = df_upd
 
     # ── Display unit-conversion summary ───────────────────────────────────────

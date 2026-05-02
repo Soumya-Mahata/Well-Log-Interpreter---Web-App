@@ -138,7 +138,18 @@ def get_available_models(df: pd.DataFrame, target_col: str) -> dict[str, str]:
         models[f"[ML/DL] {legacy_col}"] = legacy_col
         seen_cols.add(legacy_col)
 
-    # 3. Conventional — velocity-domain prefix ────────────────────────────────
+    # 3. Conventional — columns starting with target_col prefix + method + _pred
+    #    New naming: DTC_Gardner_pred, DTS_Castagna_pred, etc.
+    for col in df.columns:
+        if col in seen_cols:
+            continue
+        # New-style: DTC_<Method>_pred or DTS_<Method>_pred
+        if col.startswith(target_col + "_") and col.endswith("_pred") and "uncertainty" not in col:
+            label = col[len(target_col)+1:-5]   # strip "DTC_" prefix and "_pred" suffix
+            models[f"[Conv] {label}"] = col
+            seen_cols.add(col)
+
+    # 3b. Legacy conventional — velocity-domain prefix Vp_*/Vs_* with 'pred'
     vel_tag = "Vp" if target_col == "DTC" else "Vs"
     for col in df.columns:
         if col in seen_cols:
