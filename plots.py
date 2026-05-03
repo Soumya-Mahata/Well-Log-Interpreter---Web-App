@@ -1090,7 +1090,7 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
             domain=_domain_t1,
             showgrid=True, gridcolor="#d8d8d8",
             showline=True, linecolor="black",
-            anchor="free",
+            anchor="y",
         ),
 
         # GR (x5) — second spine, limegreen, overlays x1
@@ -1124,7 +1124,7 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
             domain=_domain_t2,
             showgrid=True, gridcolor="#d8d8d8",
             showline=True, linecolor="navy",
-            anchor="free",
+            anchor="y",
         ),
 
         # LLM (x4) — second spine, cyan, overlays x2
@@ -1176,7 +1176,7 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
             domain=_domain_t3,
             showgrid=True, gridcolor="#d8d8d8",
             showline=True, linecolor="darkgreen",
-            anchor="free",
+            anchor="y",
         ),
 
         # RHOB (x6) — second spine, red, overlays x3
@@ -1190,9 +1190,11 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
             side="top",
             overlaying="x3",
             position=_pos_mid,
+            domain=_domain_t3,
             showgrid=False,
             zeroline=False,
             showline=True, linecolor="red",
+            showticklabels=True,
             anchor="free",
         ),
 

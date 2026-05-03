@@ -92,15 +92,18 @@ Zones with <b>low Sw</b> (below the cutoff) are hydrocarbon-bearing.
     with tab2:
         st.subheader("Pickett Plot — Rw Estimation")
         st.markdown(r"""
-Log-log crossplot of **ϕ** (x-axis) vs **Rt** (y-axis). In water-bearing zones (Sw = 1):
+**Log-log crossplot of Rt (y-axis, ohm·m) vs ϕ (x-axis, v/v).**
 
-$$\log(R_t) = -m \cdot \log(\phi) + \log(a \cdot R_w)$$
+In water-bearing zones (Sw = 1), the data follows a straight line on the log-log scale:
 
-The **Sw = 1 line** (blue) should pass through the clean **water-bearing** scatter cluster.
-Adjust **Rw** until the line aligns, then click **Use this Rw**.
+$$\log_{10}(R_t) = -m \cdot \log_{10}(\phi) + \log_{10}(a \cdot R_w)$$
 
-> **Reading guide:** Points plotting *above* the Sw=1 line are hydrocarbon-bearing (Sw < 1).
-> Points on or below the line are water-wet. The slope of the trend = −m (cementation exponent).
+**Reading guide:**
+- The **blue Sw=1.0 line** must pass through the **lowest-resistivity (water-wet)** data cluster.
+- Adjust **Rw** until the Sw=1 line aligns with those water-bearing points.
+- Points **above** the Sw=1 line are hydrocarbon-bearing (Sw < 1).
+- The **slope** of the data trend = −m (cementation exponent).
+- The auto-estimated Rw uses only the lower-Rt 20th-percentile in each porosity bin to approximate water-bearing points.
         """)
 
         rt_col  = _ss("fl_rt_col")
@@ -114,19 +117,25 @@ Adjust **Rw** until the line aligns, then click **Use this Rw**.
                                index=(color_opts.index(_gr) if _gr and _gr in color_opts else 0))
 
         if rt_col and phi_col and rt_col in df.columns and phi_col in df.columns:
+            # Auto-estimate Rw using improved water-bearing percentile method
             rw_auto = utils.estimate_rw_pickett(df[rt_col], df[phi_col], a_v, m_v)
-            st.info(f"Auto-estimated Rw from Pickett regression: **{rw_auto:.4f} ohm·m**")
+            st.info(
+                f"Auto-estimated Rw (water-bearing percentile method): **{rw_auto:.4f} ohm·m**  \n"
+                f"This uses the lowest-Rt 20% in each porosity bin to approximate Sw≈1 points."
+            )
 
             pk_col1, pk_col2 = st.columns([2, 1])
             rw_pk = pk_col1.number_input(
-                "Rw for Pickett overlay (ohm·m) — adjust until Sw=1 line fits water cluster",
+                "Rw for overlay (ohm·m) — adjust until blue Sw=1 line passes through water cluster",
                 value=float(round(rw_auto, 4)),
                 min_value=0.001, max_value=10.0,
                 step=0.005, format="%.4f", key="fl_pk_rw_ni",
-                help="Rw = formation water resistivity. Increase to shift Sw=1 line up/right.",
+                help=(
+                    "Increase Rw to shift Sw=1 line upward (higher Rt intercept).  "
+                    "Decrease to shift it down.  Target: line through water-wet cluster."
+                ),
             )
 
-            # Inline Archie parameters for quick sensitivity
             with pk_col2:
                 st.caption("Quick Archie sensitivity")
                 m_pk = st.number_input("m (cementation)", value=float(m_v),
@@ -135,6 +144,14 @@ Adjust **Rw** until the line aligns, then click **Use this Rw**.
                 a_pk = st.number_input("a (tortuosity)",  value=float(a_v),
                                        min_value=0.1, max_value=5.0, step=0.05,
                                        format="%.2f", key="fl_pk_a")
+
+            # Show current Sw=1 intercept info to help user tune
+            rt_at_phi010 = (a_pk * rw_pk) / (1.0 ** n_v * 0.10 ** m_pk)
+            rt_at_phi020 = (a_pk * rw_pk) / (1.0 ** n_v * 0.20 ** m_pk)
+            st.caption(
+                f"Sw=1 line intercepts: Rt = **{rt_at_phi010:.2f}** ohm·m at ϕ=0.10,  "
+                f"Rt = **{rt_at_phi020:.2f}** ohm·m at ϕ=0.20"
+            )
 
             st.plotly_chart(
                 plots.plot_pickett(df, rt_col, phi_col,
@@ -228,8 +245,18 @@ K ≈ 61 mV at 25 °C; this is an approximation — use the Pickett plot for pre
 |-----------|-------|
 | RT curve       | `{rt_col  or 'not assigned'}` |
 | Porosity curve | `{phi_col or 'not assigned'}` |
-| a | {a_v:.2f} | m | {m_v:.2f} | n | {n_v:.2f} |
+| a (tortuosity) | {a_v:.2f} |
+| m (cementation)| {m_v:.2f} |
+| n (saturation) | {n_v:.2f} |
 | **Rw** | **{rw_v:.4f} ohm·m** |
+        """)
+
+        st.markdown("""
+**RQI (Reservoir Quality Index)** — Amaefule et al. (1993):
+$$RQI = 0.0314 \\sqrt{\\frac{k}{\\phi_e}}$$
+When permeability (k) is unavailable, a log-derived proxy is used:
+$$RQI_{proxy} = \\phi_e \\cdot (1 - S_w)$$
+This captures both storage capacity and hydrocarbon pore volume.
         """)
 
         sw_cut = st.slider(
@@ -254,17 +281,11 @@ K ≈ 61 mV at 25 °C; this is an approximation — use the Pickett plot for pre
                         df_upd[rt_col], df_upd[phi_col], rw_v, a_v, m_v, n_v)
                     df_upd["SH"] = utils.hydrocarbon_saturation(df_upd["SW"])
 
-                    # Reservoir Quality Index (RQI) — matches reference notebook
-                    # RQI = PHIE × (1 - GR_Norm)  where GR_Norm normalised 0–1
-                    gr_c = _ss("fl_rt_col")  # use GR if available
-                    gr_col_rqi = utils.find_col(df_upd, ["GR", "GRD"])
-                    if gr_col_rqi and gr_col_rqi in df_upd.columns:
-                        gr_data = df_upd[gr_col_rqi]
-                        gr_norm = (gr_data - gr_data.min()) / (gr_data.max() - gr_data.min() + 1e-9)
-                        df_upd["GR_NORM"] = gr_norm.clip(0, 1)
-                        df_upd["RQI"] = (df_upd[phi_col] * (1.0 - df_upd["GR_NORM"])).clip(0)
-                    else:
-                        df_upd["RQI"] = df_upd[phi_col].clip(0)
+                    # RQI proxy = PHIE × (1 − Sw)  — hydrocarbon pore volume fraction
+                    # This is the best log-derived RQI when k is unavailable
+                    # (Amaefule 1993 full formula requires core permeability)
+                    phi_series = df_upd[phi_col].clip(0, 1)
+                    df_upd["RQI"] = (phi_series * df_upd["SH"]).clip(0)
 
                     st.session_state.df    = df_upd
                     st.session_state.sw_done = True
@@ -288,18 +309,65 @@ K ≈ 61 mV at 25 °C; this is an approximation — use the Pickett plot for pre
                 key="fluids_pc3",
             )
 
+            # ── Sw vs PHIE crossplot (key QC plot for fluid analysis) ────────
+            if phie_col and phie_col in df_cur.columns:
+                st.subheader("Sw vs PHIE Crossplot")
+                st.caption(
+                    "Hydrocarbon-bearing samples (Sw < cutoff) shown in red. "
+                    "Good reservoirs show high PHIE and low Sw."
+                )
+                import plotly.graph_objects as _go
+                hc_mask = df_cur["SW"] < sw_cut
+                fig_xp = _go.Figure()
+                fig_xp.add_trace(_go.Scatter(
+                    x=df_cur.loc[~hc_mask, phie_col], y=df_cur.loc[~hc_mask, "SW"],
+                    mode="markers", name="Water-bearing",
+                    marker=dict(color="#1565C0", size=4, opacity=0.5),
+                ))
+                fig_xp.add_trace(_go.Scatter(
+                    x=df_cur.loc[hc_mask, phie_col], y=df_cur.loc[hc_mask, "SW"],
+                    mode="markers", name="HC-bearing",
+                    marker=dict(color="#C62828", size=5, opacity=0.65),
+                ))
+                fig_xp.add_hline(
+                    y=sw_cut,
+                    line=dict(color="#E53935", dash="dash", width=1.8),
+                    annotation_text=f"Sw cut={sw_cut}",
+                    annotation_font=dict(color="#E53935"),
+                )
+                fig_xp.update_xaxes(title_text=f"{phie_col} (v/v)", range=[0, 0.50],
+                                     showgrid=True, gridcolor="#d4d4d4",
+                                     title_font=dict(color="#212121"),
+                                     tickfont=dict(color="#212121"))
+                fig_xp.update_yaxes(title_text="Sw (v/v)", range=[0, 1.05],
+                                     showgrid=True, gridcolor="#d4d4d4",
+                                     title_font=dict(color="#212121"),
+                                     tickfont=dict(color="#212121"))
+                fig_xp.update_layout(
+                    title=dict(text="<b>Sw vs PHIE Crossplot</b>",
+                               font=dict(size=14, color="#0D2B5E")),
+                    height=420, plot_bgcolor="white", paper_bgcolor="white",
+                    legend=dict(font=dict(color="#212121")),
+                )
+                st.plotly_chart(fig_xp, use_container_width=True, key="fluids_sw_phi_xplot")
+
             # ── RQI vs Depth ─────────────────────────────────────────────────
             if "RQI" in df_cur.columns:
                 st.subheader("Reservoir Quality Index (RQI) vs Depth")
+                st.caption("RQI proxy = PHIE × (1 − Sw) — hydrocarbon pore-volume fraction per unit bulk volume")
                 import plotly.express as px
                 fig_rqi = px.line(
                     x=df_cur["RQI"], y=df_cur["DEPTH"],
-                    labels={"x": "RQI", "y": "Depth"},
-                    title="RQI = PHIE × (1 − GR_Norm)",
+                    labels={"x": "RQI (proxy)", "y": "Depth"},
+                    title="RQI proxy = PHIE × SH  (hydrocarbon pore volume fraction)",
                     color_discrete_sequence=["#F57F17"],
                 )
                 fig_rqi.update_yaxes(autorange="reversed")
-                fig_rqi.update_xaxes(showgrid=True, gridcolor="#d4d4d4")
+                fig_rqi.update_xaxes(showgrid=True, gridcolor="#d4d4d4",
+                                      title_font=dict(color="#212121"),
+                                      tickfont=dict(color="#212121"))
+                fig_rqi.update_yaxes(title_font=dict(color="#212121"),
+                                      tickfont=dict(color="#212121"))
                 fig_rqi.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="white")
                 st.plotly_chart(fig_rqi, use_container_width=True, key="fluids_rqi")
 
@@ -332,5 +400,12 @@ K ≈ 61 mV at 25 °C; this is an approximation — use the Pickett plot for pre
                 c1, c2 = st.columns(2)
                 c1.metric("HC-bearing samples", f"{pay_n:,}")
                 c2.metric("HC %", f"{pay_n / len(df_cur) * 100:.1f}%")
+
+                # Archie parameters used — quick reference
+                st.markdown(f"""
+**Archie parameters used:**
+- a = {a_v:.2f},  m = {m_v:.2f},  n = {n_v:.2f}
+- Rw = **{rw_v:.4f}** ohm·m
+                """)
         else:
             st.info("Press **Compute Sw + RQI** above after assigning curves and Rw.")

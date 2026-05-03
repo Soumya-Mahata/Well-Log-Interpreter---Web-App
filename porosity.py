@@ -148,7 +148,6 @@ the pore space available to hydrocarbons.
                 disabled=not apply_ss_cal,
             )
             st.session_state["por_apply_ss_cal"] = apply_ss_cal
-            st.session_state["por_ss_corr"]      = ss_corr
 
         with st.expander("Sonic Porosity Parameters (Wyllie Time-Average)"):
             sc1, sc2 = st.columns(2)
@@ -263,13 +262,17 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
 
             ka, kb = st.columns(2)
             phid_sh = phin_sh = None
+            rhob_sh_mean = None  # mean RHOB at shale (for crossplot y-axis)
 
             if rhob_col and rhob_col in df.columns:
                 phid_sh = float(
                     utils.density_porosity(df.loc[shale_mask, rhob_col], rma, rfl).mean()
                 )
+                rhob_sh_mean = float(df.loc[shale_mask, rhob_col].mean())
                 ka.metric("PHID_sh (density porosity at shale)", f"{phid_sh:.4f}")
-                st.session_state["por_phid_sh"] = phid_sh
+                ka.metric("RHOB_sh (mean bulk density at shale)", f"{rhob_sh_mean:.3f} g/cc")
+                st.session_state["por_phid_sh"]   = phid_sh
+                st.session_state["por_rhob_sh"]   = rhob_sh_mean
 
             if nphi_col and nphi_col in df.columns:
                 nphi_sh_raw = utils.neutron_porosity(df.loc[shale_mask, nphi_col])
@@ -280,6 +283,7 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
                 st.session_state["por_phin_sh"] = phin_sh
 
             # N-D crossplot with shale points highlighted
+            # y-axis = RHOB (g/cc), x-axis = NPHI (v/v) — standard convention
             if rhob_col and nphi_col \
                and rhob_col in df.columns and nphi_col in df.columns:
                 fig_sh = plots.plot_nphi_rhob(df, nphi_col, rhob_col, show_lines=True)
@@ -296,17 +300,18 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
                                 line=dict(color="black", width=1)),
                 ))
 
-                # Annotate shale point
-                if phid_sh is not None and phin_sh is not None:
+                # Annotate mean shale point: x = mean NPHI at shale, y = mean RHOB at shale
+                # (NOT PHID — RHOB scale ≠ PHID scale on this crossplot)
+                if phin_sh is not None and rhob_sh_mean is not None:
                     fig_sh.add_trace(go.Scatter(
-                        x=[phin_sh], y=[phid_sh],
+                        x=[phin_sh], y=[rhob_sh_mean],
                         mode="markers", name="Shale Point (mean)",
                         marker=dict(color="#000000", size=12, symbol="square",
                                     line=dict(color="white", width=1.5)),
                     ))
                     fig_sh.add_annotation(
-                        x=phin_sh + 0.02, y=phid_sh + 0.02,
-                        text=f"<b>Shale<br>Φ_Nsh={phin_sh:.2f}<br>Φ_Dsh={phid_sh:.2f}</b>",
+                        x=phin_sh + 0.02, y=rhob_sh_mean - 0.04,
+                        text=f"<b>Shale Point<br>NPHI_sh={phin_sh:.2f}<br>RHOB_sh={rhob_sh_mean:.2f} g/cc<br>PHID_sh={phid_sh:.3f}</b>",
                         showarrow=True, arrowhead=2, arrowcolor="#333",
                         font=dict(size=10, color="#212121"),
                         bgcolor="rgba(255,255,255,0.90)",
@@ -332,35 +337,63 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
         apply_ss = _ss("por_apply_ss_cal", False)
         ss_cor   = _ss("por_ss_corr", 0.04)
 
+        st.markdown("""
+**Workflow (following Formation Evaluation Practical, Mandal 2026):**
+1. Compute raw PHID, PHIN (and PHIS if sonic available)
+2. Identify gas zones: PHID > PHIN → apply quadratic-mean gas correction for PHIT
+3. Liquid zones: PHIT = (PHID + PHIN) / 2
+4. PHIE = PHIT − Vsh × φ_sh_avg  (shale correction, where φ_sh_avg = (PHID_sh + PHIN_sh) / 2)
+        """)
+
+        # Use VSH from Lithology if already computed, otherwise recompute from GR
+        has_precomputed_vsh = "VSH" in df.columns
+
+        if has_precomputed_vsh:
+            st.success("✅ Using precomputed **VSH** from Lithology module for shale correction.")
+
         apply_vsh = st.checkbox(
-            "Apply shale correction (requires GR)",
-            value=bool(gr_col),
+            "Apply shale correction (Vsh-based PHIE)",
+            value=bool(gr_col or has_precomputed_vsh),
             key="por_apply_vsh",
         )
 
         gr_clean, gr_shale, phid_sh, phin_sh = 20.0, 120.0, 0.10, 0.30
 
-        if apply_vsh and gr_col and gr_col in df.columns:
-            gr_data   = df[gr_col].dropna()
-            vc1, vc2  = st.columns(2)
-            gr_clean  = vc1.number_input(
-                "GR clean (API)", value=float(round(gr_data.quantile(0.05), 1)), key="por_gr_clean")
-            gr_shale  = vc2.number_input(
-                "GR shale (API)", value=float(round(gr_data.quantile(0.95), 1)), key="por_gr_shale")
-            st.divider()
-            sc1, sc2 = st.columns(2)
-            phid_sh = sc1.number_input(
-                "PHIDsh (from Shale Point ID tab)",
-                value=float(round(_ss("por_phid_sh", 0.10), 4)),
-                step=0.01, format="%.4f", key="por_phid_sh_ni",
-                help="Auto-filled from Shale Point ID tab. Edit if needed.",
-            )
-            phin_sh = sc2.number_input(
-                "PHINsh (from Shale Point ID tab)",
-                value=float(round(_ss("por_phin_sh", 0.30), 4)),
-                step=0.01, format="%.4f", key="por_phin_sh_ni",
-                help="Auto-filled from Shale Point ID tab. Edit if needed.",
-            )
+        if apply_vsh:
+            if has_precomputed_vsh:
+                st.info("Shale correction will use the **VSH** column computed in the Lithology module.")
+            elif gr_col and gr_col in df.columns:
+                gr_data   = df[gr_col].dropna()
+                vc1, vc2  = st.columns(2)
+                gr_clean  = vc1.number_input(
+                    "GR clean (API)", value=float(round(gr_data.quantile(0.05), 1)), key="por_gr_clean")
+                gr_shale  = vc2.number_input(
+                    "GR shale (API)", value=float(round(gr_data.quantile(0.95), 1)), key="por_gr_shale")
+            else:
+                st.warning("No VSH column and no GR curve assigned — shale correction cannot be applied.")
+                apply_vsh = False
+
+            if apply_vsh:
+                st.divider()
+                st.markdown("**Shale porosity end-points** (auto-filled from Shale Point ID tab):")
+                sc1, sc2 = st.columns(2)
+                phid_sh = sc1.number_input(
+                    "PHID_sh  — density porosity of shale",
+                    value=float(round(_ss("por_phid_sh", 0.10), 4)),
+                    step=0.005, format="%.4f", key="por_phid_sh_ni",
+                    help="Mean density porosity in the shale region. Auto-filled from Shale Point ID tab.",
+                )
+                phin_sh = sc2.number_input(
+                    "PHIN_sh  — neutron porosity of shale",
+                    value=float(round(_ss("por_phin_sh", 0.30), 4)),
+                    step=0.005, format="%.4f", key="por_phin_sh_ni",
+                    help="Mean neutron porosity in the shale region. Auto-filled from Shale Point ID tab.",
+                )
+                phi_sh_avg = (phid_sh + phin_sh) / 2.0
+                st.caption(
+                    f"φ_sh_avg = (PHID_sh + PHIN_sh) / 2 = **{phi_sh_avg:.4f}**  →  "
+                    f"PHIE = PHIT − Vsh × {phi_sh_avg:.4f}"
+                )
 
         if apply_ss and nphi_col:
             st.info(f"Sandstone calibration active: NPHI + {ss_cor:.3f} v/v (limestone→sandstone)")
@@ -370,16 +403,24 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
                 df_upd = st.session_state.df.copy()
                 computed = []
 
-                if apply_vsh and gr_col and gr_col in df_upd.columns:
-                    df_upd["VSH"] = utils.compute_vshale_gr(
-                        df_upd[gr_col], gr_clean, gr_shale)
-                    computed.append("VSH")
+                # ── Step 1: VSH ───────────────────────────────────────────────
+                if apply_vsh:
+                    if "VSH" not in df_upd.columns:
+                        # Compute from GR if not already present
+                        if gr_col and gr_col in df_upd.columns:
+                            df_upd["VSH"] = utils.compute_vshale_gr(
+                                df_upd[gr_col], gr_clean, gr_shale)
+                            computed.append("VSH")
+                    else:
+                        computed.append("VSH (precomputed)")
 
+                # ── Step 2: PHID (density porosity) ──────────────────────────
                 if rhob_col and rhob_col in df_upd.columns:
                     df_upd["PHID"] = utils.density_porosity(
                         df_upd[rhob_col], rho_ma, rho_fl)
                     computed.append("PHID")
 
+                # ── Step 3: PHIN (neutron porosity, optional SS calibration) ─
                 if nphi_col and nphi_col in df_upd.columns:
                     nphi_raw = utils.neutron_porosity(df_upd[nphi_col])
                     if apply_ss:
@@ -389,28 +430,38 @@ Reference: Formation Evaluation Practical (Mandal 2026, IIT ISM).
                     df_upd["PHIN"] = nphi_raw.values
                     computed.append("PHIN")
 
+                # ── Step 4: PHIS (sonic porosity — Wyllie time-average) ───────
                 if dt_col and dt_col in df_upd.columns:
                     df_upd["PHIS"] = utils.sonic_porosity(df_upd[dt_col], dt_ma, dt_fl)
                     computed.append("PHIS")
 
-                # Total porosity — gas correction (quadratic mean when PHID > PHIN)
+                # ── Step 5: PHIT — gas-corrected total porosity ───────────────
+                # Gas crossover: PHID > PHIN → quadratic-mean correction
+                # (Schlumberger Log Interpretation Principles; Mandal 2026 Practical 3)
                 if "PHID" in df_upd.columns and "PHIN" in df_upd.columns:
-                    phid = df_upd["PHID"]
-                    phin = df_upd["PHIN"]
-                    gas_flag = phid > phin
+                    phid_v = df_upd["PHID"]
+                    phin_v = df_upd["PHIN"]
+                    gas_flag = phid_v > phin_v
+                    n_gas = int(gas_flag.sum())
                     df_upd["PHIT"] = np.where(
                         gas_flag,
-                        np.sqrt((phin ** 2 + phid ** 2) / 2),
-                        (phin + phid) / 2,
+                        np.sqrt((phin_v ** 2 + phid_v ** 2) / 2.0),  # gas correction
+                        (phin_v + phid_v) / 2.0,                      # liquid zones
                     ).clip(0, 0.5)
+                    computed.append("PHIT")
+                    if n_gas > 0:
+                        pct_gas = n_gas / len(df_upd) * 100
+                        st.info(f"⚠️ Gas crossover detected in **{n_gas}** samples ({pct_gas:.1f}%). "
+                                f"Quadratic-mean correction applied (PHID > PHIN).")
                 elif "PHID" in df_upd.columns:
                     df_upd["PHIT"] = df_upd["PHID"].clip(0, 0.5)
+                    computed.append("PHIT")
                 elif "PHIN" in df_upd.columns:
                     df_upd["PHIT"] = df_upd["PHIN"].clip(0, 0.5)
-                if "PHIT" in df_upd.columns:
                     computed.append("PHIT")
 
-                # Effective porosity (shale-corrected)
+                # ── Step 6: PHIE — effective porosity (shale-corrected) ───────
+                # PHIE = PHIT − Vsh × φ_sh_avg  (Mandal 2026; Schlumberger 2009)
                 if "PHIT" in df_upd.columns:
                     if apply_vsh and "VSH" in df_upd.columns:
                         df_upd["PHIE"] = utils.effective_porosity(

@@ -135,8 +135,17 @@ Compute **Vsh** (Volume of Shale) from the Gamma Ray log using multiple methods.
                 _dep   = df_cur["DEPTH"].values
                 _gr_v  = df_cur[gr_vsh].values
                 _vsh_v = df_cur["VSH"].values
-                _gr_cut = gr_clean_val + (gr_shale_val - gr_clean_val) * 0.50
                 _gr_max = max(150.0, float(df_cur[gr_vsh].quantile(0.99)) * 1.05)
+                _gr_cut_default = gr_clean_val + (gr_shale_val - gr_clean_val) * 0.50
+                _gr_cut = st.slider(
+                    "GR cutoff (API)",
+                    min_value=float(gr_clean_val),
+                    max_value=float(gr_shale_val),
+                    value=float(_gr_cut_default),
+                    step=1.0,
+                    key="lit_vsh_gr_cutoff",
+                    help="Threshold separating Sand (below) from Shale (above) on the GR track",
+                )
 
                 fig_vsh = _msp(rows=1, cols=2, shared_yaxes=True,
                                 subplot_titles=["GR (API)", "VSHALE"],
@@ -292,11 +301,11 @@ Compute **Vsh** (Volume of Shale) from the Gamma Ray log using multiple methods.
                         font=dict(size=15, color="#0D2B5E"),
                         x=0.5, xanchor="center",
                     ),
-                    height=720, margin=dict(l=65, r=100, t=70, b=45),
+                    height=720, margin=dict(l=65, r=100, t=70, b=80),
                     plot_bgcolor="white", paper_bgcolor="white",
                     legend=dict(
-                        orientation="h", yanchor="bottom", y=-0.08,
-                        xanchor="center", x=0.4,
+                        orientation="h", yanchor="top", y=-0.08,
+                        xanchor="center", x=0.25,
                         bgcolor="rgba(255,255,255,0.95)",
                         bordercolor="#aaaaaa", borderwidth=1,
                         font=dict(color="#212121", size=10),
@@ -718,25 +727,10 @@ Gas shifts ρmaa upward; barite shifts Umaa to the right.
             tc_bit  = oc4.number_input("Bit size (in)", value=8.5, min_value=4.0,
                                         max_value=26.0, step=0.5, key="lit_tc_bit")
 
-        # ── Depth range sliders (mirrors notebook FloatSlider widgets) ────────
-        _d_min = float(df["DEPTH"].min())
-        _d_max = float(df["DEPTH"].max())
-        dr1, dr2 = st.columns(2)
-        tc_top = dr1.slider(
-            "Top Depth (m)", min_value=_d_min, max_value=_d_max,
-            value=_d_min, step=5.0, key="lit_tc_top",
-        )
-        tc_bot = dr2.slider(
-            "Bottom Depth (m)", min_value=_d_min, max_value=_d_max,
-            value=_d_max, step=5.0, key="lit_tc_bot",
-        )
-        if tc_top >= tc_bot:
-            st.warning("Top depth must be less than bottom depth.")
-
         if any(
             c != "None" and c in df.columns
             for c in [tc_gr, tc_rt, tc_rhob, tc_nphi]
-        ) and tc_top < tc_bot:
+        ):
             st.plotly_chart(
                 plots.plot_triple_combo_lit(
                     df=st.session_state.df,
@@ -749,8 +743,6 @@ Gas shifts ρmaa upward; barite shifts Umaa to the right.
                     bit_size=tc_bit,
                     lls_col=None if tc_lls == "None" else tc_lls,
                     llm_col=None if tc_llm == "None" else tc_llm,
-                    top_depth=tc_top,
-                    bottom_depth=tc_bot,
                 ),
                 use_container_width=True,
                 key="lithology_tc_plot",

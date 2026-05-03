@@ -6,9 +6,8 @@ Implements physics-based equations to predict Vp / Vs:
   1. Gardner (1974)       ρ → Vp
   2. Castagna (1985)      Vp → Vs  (Mudrock Line)
   3. Castagna (1985)      Vs → Vp  (Inverse)
-  4. Smith (2007)         Rt → Vp
-  5. Brocher (2005)       Vp → Vs
-  6. Carroll (1969)       Vp → Vs
+  4. Brocher (2005)       Vp → Vs
+  5. Carroll (1969)       Vp → Vs
 
 Unit handling:
   • All internal calculations are performed in **km/s**.
@@ -126,12 +125,12 @@ def _castagna_vs2vp(vs_kms: pd.Series) -> pd.Series:
     return (vs_kms + 1.1724) / 0.8621
 
 
-def _smith(rt: pd.Series) -> pd.Series:
-    """
-    Smith (2007) — sonic from resistivity (clastic approximation)
-    Vp ≈ 1 / (0.02·log(Rt) + 0.1)   [km/s]
-    """
-    return 1.0 / (0.02 * np.log(rt.clip(lower=0.1)) + 0.1)
+# def _smith(rt: pd.Series) -> pd.Series:
+#     """
+#     Smith (2007) — sonic from resistivity (clastic approximation)
+#     Vp ≈ 1 / (0.02·log(Rt) + 0.1)   [km/s]
+#     """
+#     return 1.0 / (0.02 * np.log(rt.clip(lower=0.1)) + 0.1)
 
 
 def _brocher(vp_kms: pd.Series) -> pd.Series:
@@ -160,7 +159,7 @@ _METHODS = [
     "Gardner (1974) — ρ → Vp",
     "Castagna (1985) — Vp → Vs  (Mudrock Line)",
     "Castagna (1985) — Vs → Vp  (Inverse)",
-    "Smith (2007) — Rt → Vp",
+    # "Smith (2007) — Rt → Vp",
     "Brocher (2005) — Vp → Vs",
     "Carroll (1969) — Vp → Vs",
 ]
@@ -170,7 +169,7 @@ _DISPATCH = {
     "Gardner (1974) — ρ → Vp":                   ("rhob", "Vp", 0.05, _gardner),
     "Castagna (1985) — Vp → Vs  (Mudrock Line)":  ("vp",   "Vs", 0.05, _castagna_vp2vs),
     "Castagna (1985) — Vs → Vp  (Inverse)":       ("vs",   "Vp", 0.05, _castagna_vs2vp),
-    "Smith (2007) — Rt → Vp":                     ("rt",   "Vp", 0.08, _smith),
+    # "Smith (2007) — Rt → Vp":                     ("rt",   "Vp", 0.08, _smith),
     "Brocher (2005) — Vp → Vs":                   ("vp",   "Vs", 0.05, _brocher),
     "Carroll (1969) — Vp → Vs":                   ("vp",   "Vs", 0.06, _carroll),
 }
@@ -196,7 +195,6 @@ def render(df: pd.DataFrame) -> None:
 | Gardner (1974) | ρ (RHOB) → Vp | ρ = 0.31·Vp^0.25 (inverted) | ±5 % |
 | Castagna (1985) | Vp → Vs | Vs = 0.8621·Vp − 1.1724 | ±5 % |
 | Castagna (1985) inverse | Vs → Vp | Vp = (Vs + 1.1724) / 0.8621 | ±5 % |
-| Smith (2007) | Rt → Vp | Vp = 1 / (0.02·ln(Rt) + 0.1) | ±8 % |
 | Brocher (2005) | Vp → Vs | 4th-order polynomial | ±5 % |
 | Carroll (1969) | Vp → Vs | Vs = 1.09913326·Vp^0.9238 | ±6 % |
     """)

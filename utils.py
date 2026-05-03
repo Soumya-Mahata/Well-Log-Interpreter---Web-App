@@ -360,20 +360,43 @@ def hydrocarbon_saturation(sw):
 
 def estimate_rw_pickett(rt, phit, a=1.0, m=2.0):
     """
-    Fit log-log straight line to (1/ϕ vs Rt):
-       log(Rt) = m·log(1/ϕ) + log(a·Rw)
-    y-intercept of the fitted line gives log(a·Rw).
-    Uses the lower 20th-percentile of Rt at each porosity bin
-    to approximate water-saturated (Sw=1) points.
+    Estimate Rw from Pickett plot regression on the water-bearing cluster.
+
+    Method: bin porosity into 10 equal-log bins; take the P20 Rt value in
+    each bin (approximates Sw=1 water-bearing points).  Fit log-log line:
+        log10(Rt) = m · log10(1/ϕ) + log10(a·Rw)
+    Intercept gives log10(a·Rw) → Rw = 10^intercept / a.
+
     Returns estimated Rw (ohm·m), clipped [0.001, 10].
     """
     tmp = pd.DataFrame({"rt": rt, "phi": phit}).dropna()
     tmp = tmp[(tmp["rt"] > 0) & (tmp["phi"] > 0.01)]
-    if len(tmp) < 5:
+    if len(tmp) < 10:
         return 0.10
-    x = np.log10(1.0 / tmp["phi"].values)
-    y = np.log10(tmp["rt"].values)
-    coeffs = np.polyfit(x, y, 1)          # slope ≈ m, intercept = log(a·Rw)
+
+    # Bin into log-spaced porosity bins and take the low-Rt (P20) in each bin
+    # to approximate the water-bearing (Sw≈1) population
+    tmp["phi_log"] = np.log10(tmp["phi"])
+    phi_min, phi_max = tmp["phi_log"].min(), tmp["phi_log"].max()
+    bins = np.linspace(phi_min, phi_max, 11)  # 10 bins
+    tmp["bin"] = pd.cut(tmp["phi_log"], bins=bins, labels=False)
+    water_pts = (
+        tmp.dropna(subset=["bin"])
+           .groupby("bin", observed=True)
+           .apply(lambda g: g.nsmallest(max(1, len(g) // 5), "rt"))  # lowest 20%
+           .reset_index(drop=True)
+    )
+
+    if len(water_pts) < 5:
+        # Fallback: use global P20 of Rt
+        rt_p20 = tmp["rt"].quantile(0.20)
+        water_pts = tmp[tmp["rt"] <= rt_p20]
+    if len(water_pts) < 3:
+        water_pts = tmp
+
+    x = np.log10(1.0 / water_pts["phi"].values)
+    y = np.log10(water_pts["rt"].values)
+    coeffs = np.polyfit(x, y, 1)   # slope ≈ m, intercept = log10(a·Rw)
     rw = 10.0 ** coeffs[1] / a
     return float(np.clip(rw, 0.001, 10.0))
 

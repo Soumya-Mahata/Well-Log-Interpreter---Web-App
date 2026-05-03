@@ -212,6 +212,15 @@ A depth sample is **net pay** only when **all** applied cutoffs are satisfied:
             )
             st.plotly_chart(fig_comp, use_container_width=True,
                 key="results_pc2")
+
+            # Pay zone summary table beneath the composite log
+            idf_comp = utils.get_pay_intervals(df_cur, pay_flag_s)
+            if not idf_comp.empty:
+                st.markdown("#### Pay Zone Summary")
+                st.dataframe(
+                    idf_comp.style.highlight_max(subset=["Thickness"], color="#C8F7C5"),
+                    use_container_width=True, hide_index=True,
+                )
         else:
             st.markdown(
                 '<div class="warn-box">Run <b>Cutoffs & Net Pay</b> first to enable '
@@ -256,18 +265,62 @@ A depth sample is **net pay** only when **all** applied cutoffs are satisfied:
                 type="primary",
             )
 
-        # Computed parameter summary
+        # ── Full Interpretation Summary ────────────────────────────────────
         st.divider()
-        st.subheader("Interpretation Summary")
+        st.subheader("📋 Interpretation Summary")
+
+        # KPI overview (if pay was computed)
+        if "PAY_FLAG" in df_cur.columns:
+            st.markdown("#### Reservoir Summary")
+            pay_stats = utils.compute_net_pay(df_cur, df_cur["PAY_FLAG"].astype(bool))
+            _render_kpi_cards(pay_stats)
+            st.divider()
+
+        # Petrophysical parameters used
+        st.markdown("#### Parameters Used")
+        param_rows = []
+
+        # Porosity parameters
+        for key, label, default in [
+            ("por_rho_matrix", "Matrix density ρma (g/cc)", 2.65),
+            ("por_rho_fluid",  "Fluid density ρf (g/cc)",   1.0),
+            ("por_dt_matrix",  "Matrix travel time Δtma (µs/ft)", 55.5),
+            ("por_dt_fluid",   "Fluid travel time Δtf (µs/ft)",   189.0),
+            ("por_phid_sh",    "PHID at shale (PHID_sh)",   0.10),
+            ("por_phin_sh",    "PHIN at shale (PHIN_sh)",   0.30),
+        ]:
+            val = st.session_state.get(key, default)
+            param_rows.append({"Module": "Porosity", "Parameter": label, "Value": f"{val}"})
+
+        # Archie / Fluid parameters
+        for key, label, default in [
+            ("fl_a",  "Tortuosity factor (a)", 1.0),
+            ("fl_m",  "Cementation exponent (m)", 2.0),
+            ("fl_n",  "Saturation exponent (n)", 2.0),
+            ("fl_rw", "Formation water resistivity Rw (ohm·m)", 0.10),
+            ("fl_sw_cut", "Sw hydrocarbon cutoff", 0.60),
+        ]:
+            val = st.session_state.get(key, default)
+            param_rows.append({"Module": "Fluid Analysis", "Parameter": label, "Value": f"{val}"})
+
+        if param_rows:
+            param_df = pd.DataFrame(param_rows)
+            st.dataframe(param_df, use_container_width=True, hide_index=True)
+
+        # Computed curve statistics
+        st.divider()
+        st.markdown("#### Computed Curve Statistics")
         summary_rows = []
-        for col in ["VSH","PHID","PHIN","PHIS","PHIT","PHIE","SW","SH"]:
+        for col in ["VSH", "PHID", "PHIN", "PHIS", "PHIT", "PHIE", "SW", "SH", "RQI"]:
             if col in df_cur.columns:
                 s = df_cur[col].dropna()
                 summary_rows.append({
-                    "Parameter": col,
+                    "Curve":     col,
                     "Min":       f"{s.min():.4f}",
+                    "P10":       f"{s.quantile(0.10):.4f}",
                     "Mean":      f"{s.mean():.4f}",
                     "Median":    f"{s.median():.4f}",
+                    "P90":       f"{s.quantile(0.90):.4f}",
                     "Max":       f"{s.max():.4f}",
                     "Non-null %":f"{s.notna().mean()*100:.1f}%",
                 })
@@ -276,7 +329,13 @@ A depth sample is **net pay** only when **all** applied cutoffs are satisfied:
         else:
             st.info("No computed curves yet.  Run Porosity and Fluid Analysis first.")
 
+        # Pay intervals detail
         if "PAY_FLAG" in df_cur.columns:
-            st.subheader("Net Pay Summary")
-            pay_stats = utils.compute_net_pay(df_cur, df_cur["PAY_FLAG"].astype(bool))
-            _render_kpi_cards(pay_stats)
+            idf_ex = utils.get_pay_intervals(df_cur, df_cur["PAY_FLAG"].astype(bool))
+            if not idf_ex.empty:
+                st.divider()
+                st.markdown("#### Pay Interval Detail")
+                st.dataframe(
+                    idf_ex.style.highlight_max(subset=["Thickness"], color="#C8F7C5"),
+                    use_container_width=True, hide_index=True,
+                )
