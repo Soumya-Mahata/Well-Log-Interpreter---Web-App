@@ -808,14 +808,16 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
                           lls_col=None, llm_col=None,
                           top_depth=None, bottom_depth=None):
     """
-    Triple Combo Plot — faithful Plotly port of notebook triple_combo_plot().
+    Triple Combo Plot — exact Plotly port of notebook triple_combo_plot().
 
-    Track 1 : GR (limegreen, 0-150) + CALI (black, 6-16) on SEPARATE x-axes
-              GR fill: sand (yellow) / shale (grey) from x=0 to GR curve
-    Track 2 : LLD (navy) / LLM (cyan dashed) / LLS (blue dotted) log 0.2-2000
-    Track 3 : RHOB (red, 1.95-2.95) + NPHI (darkgreen, inverted 0.45→-0.15)
-              Both mapped to NPHI coordinate space; HC fill orange, Shale grey
+    Track 1: GR (limegreen, 0–150, top axis) + CALI (black, 6–16, top axis)
+             fill_betweenx equivalent: sand=yellow where GR<cutoff, shale=grey where GR>=cutoff
+    Track 2: LLD (navy) / LLM (cyan dashed) / LLS (blue dotted), log 0.2–2000
+    Track 3: RHOB (red, 1.95–2.95) + NPHI (darkgreen, inverted 0.45→-0.15)
+             Both in NPHI coordinate space; HC orange, Shale grey
     """
+    import numpy as _np
+
     # ── Depth slice ───────────────────────────────────────────────────────────
     work = df.copy()
     if top_depth is not None:
@@ -825,104 +827,91 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
     if work.empty:
         return go.Figure()
 
-    depth  = work[depth_col].values
-    depth_s = work[depth_col]   # Series for Plotly
+    depth   = work[depth_col].values.astype(float)
+    depth_s = work[depth_col]
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # Build figure with 3 subplots.
-    # Track 1 needs dual x-axes (GR + CALI) — we handle CALI via xaxis4
-    # which overlays on subplot col=1.
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── Figure with 3 subplots ────────────────────────────────────────────────
     fig = make_subplots(
         rows=1, cols=3, shared_yaxes=True,
-        subplot_titles=["GR + CALI", "Resistivity (Ω·m)", "RHOB & NPHI"],
-        horizontal_spacing=0.07,
+        horizontal_spacing=0.08,
     )
-    _fix_subtitles(fig)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TRACK 1 — GR (xaxis1) + CALI (xaxis4 overlay)
-    # Notebook: ax01 xlim(0,150) GR limegreen; ax02 xlim(6,16) CALI black
+    # TRACK 1 — GR + CALI
+    # Notebook: ax01=GR xlim(0,150) limegreen; ax02=CALI xlim(6,16) black
+    # Fill exactly: fill_betweenx(depth, 0, gr, where=(gr<cutoff), yellow)
+    #               fill_betweenx(depth, 0, gr, where=(gr>=cutoff), grey)
+    # Plotly: build per-segment closed polygons for correct where= behaviour
     # ══════════════════════════════════════════════════════════════════════════
     if gr_col and gr_col in work.columns:
         gr = work[gr_col].values.astype(float)
+        gr_clipped = _np.clip(gr, 0, 150)
 
-        # Sand fill: 0 → GR where GR < cutoff (clamp at cutoff)
-        gr_sand  = np.where(gr < gr_cutoff, gr, gr_cutoff)
-        fig.add_trace(go.Scatter(
-            x=gr_sand, y=depth_s, mode="lines",
-            name="Sand Zone",
-            line=dict(width=0, color="rgba(255,235,59,0)"),
-            fill="tozerox", fillcolor="rgba(255,235,59,0.55)",
-            hoverinfo="skip", showlegend=True,
-        ), row=1, col=1)
+        def _fill_betweenx_zero(mask, fill_color, legend_name):
+            """Exact equivalent of fill_betweenx(depth, 0, gr, where=mask)."""
+            idx = _np.where(mask & ~_np.isnan(gr_clipped))[0]
+            if not len(idx):
+                return
+            # Build contiguous runs
+            runs, cur = [], [idx[0]]
+            for i in idx[1:]:
+                if i == cur[-1] + 1:
+                    cur.append(i)
+                else:
+                    runs.append(cur); cur = [i]
+            runs.append(cur)
+            for ri, r in enumerate(runs):
+                d_r  = depth[r]
+                gr_r = gr_clipped[r]
+                # Closed polygon: [0→gr forward] + [gr→0 backward]
+                # x: 0,...,0, gr_r[n-1],...,gr_r[0]
+                x_p = _np.concatenate([_np.zeros(len(r)), gr_r[::-1]])
+                y_p = _np.concatenate([d_r,               d_r[::-1]])
+                fig.add_trace(go.Scatter(
+                    x=x_p, y=y_p,
+                    fill="toself", fillcolor=fill_color,
+                    line=dict(width=0), mode="none",
+                    name=legend_name,
+                    showlegend=(ri == 0),
+                    legendgroup=legend_name,
+                    hoverinfo="skip",
+                    xaxis="x5", yaxis="y",   # GR axis
+                ))
 
-        # Shale fill: 0 → GR where GR ≥ cutoff
-        gr_shale = np.where(gr >= gr_cutoff, gr, gr_cutoff)
-        fig.add_trace(go.Scatter(
-            x=gr_shale, y=depth_s, mode="lines",
-            name="Shale Zone",
-            line=dict(width=0, color="rgba(128,128,128,0)"),
-            fill="tozerox", fillcolor="rgba(128,128,128,0.50)",
-            hoverinfo="skip", showlegend=True,
-        ), row=1, col=1)
+        _fill_betweenx_zero(gr < gr_cutoff,  "rgba(255,255,0,0.50)",   "Sand Zone")
+        _fill_betweenx_zero(gr >= gr_cutoff, "rgba(128,128,128,0.50)", "Shale Zone")
 
-        # GR line (limegreen, lw=1.5)
+        # GR line on top (limegreen)
         fig.add_trace(go.Scatter(
-            x=gr, y=depth_s, mode="lines", name="GR log",
+            x=gr_clipped, y=depth_s, mode="lines", name="GR log",
             line=dict(color="limegreen", width=1.5),
+            xaxis="x5", yaxis="y",   # GR axis
             hovertemplate="GR: %{x:.1f} API<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=1)
+        ))
 
-    # GR x-axis (xaxis1 = subplot col 1 bottom)
-    fig.update_xaxes(
-        title_text="GR (API)",
-        title_font=dict(size=10, color="limegreen"),
-        tickfont=dict(color="limegreen", size=9),
-        range=[0, 250], showgrid=True, gridcolor="#e0e0e0",
-        row=1, col=1,
-    )
-
-    # CALI — separate x-axis overlaying col 1 (xaxis4, plotted on top axis)
+    # ── CALI on secondary x-axis (xaxis5) overlaid on col-1 ─────────────────
     _cali = cali_col or next(
         (c for c in work.columns if "CALI" in c.upper() or "HCAL" in c.upper()), None)
-    has_cali = _cali and _cali in work.columns
+    has_cali = bool(_cali and _cali in work.columns)
 
     if has_cali:
-        # CALI curve on xaxis4
         fig.add_trace(go.Scatter(
             x=work[_cali].values, y=depth_s,
             mode="lines", name="CALI (in)",
             line=dict(color="black", width=1.2),
-            xaxis="x4",
+            xaxis="x", yaxis="y",   # CALI primary axis
             hovertemplate="CALI: %{x:.2f} in<br>Depth: %{y:.1f}<extra></extra>",
         ))
-        # Bit-size line on xaxis4
         fig.add_trace(go.Scatter(
-            x=np.full(len(depth), bit_size), y=depth_s,
+            x=_np.full(len(depth), bit_size), y=depth_s,
             mode="lines", name=f"Bit Size ({bit_size}\")",
             line=dict(color="navy", width=1.5, dash="dash"),
-            xaxis="x4", hoverinfo="skip",
+            xaxis="x", yaxis="y",   # CALI primary axis
+            hoverinfo="skip",
         ))
-        # Configure xaxis4 to overlay on yaxis1 (col 1) with range 6-16
-        fig.update_layout(
-            xaxis4=dict(
-                overlaying="x",          # overlay on subplot col-1 x-axis
-                anchor="y",
-                side="top",
-                range=[6, 16],
-                showgrid=False,
-                zeroline=False,
-                title="CALI (in)",
-                title_font=dict(size=10, color="black"),
-                tickfont=dict(color="black", size=9),
-                showline=True,
-                linecolor="black",
-            )
-        )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TRACK 2 — Resistivity log scale 0.2–2000
+    # TRACK 2 — Resistivity (log 0.2–2000)
     # Notebook: LLD navy solid, LLM cyan dashed, LLS blue dotted
     # ══════════════════════════════════════════════════════════════════════════
     _lls = lls_col or next(
@@ -934,71 +923,70 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
         fig.add_trace(go.Scatter(
             x=work[rt_col].values, y=depth_s, mode="lines", name="LLD",
             line=dict(color="navy", width=2.0),
+            xaxis="x2", yaxis="y",
             hovertemplate="LLD: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=2)
+        ))
     if _llm and _llm in work.columns:
         fig.add_trace(go.Scatter(
             x=work[_llm].values, y=depth_s, mode="lines", name="LLM",
             line=dict(color="cyan", width=1.6, dash="dash"),
+            xaxis="x4", yaxis="y",   # LLM dedicated axis
             hovertemplate="LLM: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=2)
+        ))
     if _lls and _lls in work.columns:
         fig.add_trace(go.Scatter(
             x=work[_lls].values, y=depth_s, mode="lines", name="LLS",
             line=dict(color="blue", width=1.6, dash="dot"),
+            xaxis="x7", yaxis="y",   # LLS dedicated axis
             hovertemplate="LLS: %{x:.3g} Ω·m<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=2)
-
-    fig.update_xaxes(
-        title_text="Resistivity (Ω·m)",
-        title_font=dict(size=10, color="navy"),
-        tickfont=dict(color="#212121", size=9),
-        type="log", range=[np.log10(0.2), np.log10(2000)],
-        showgrid=True, gridcolor="#e0e0e0",
-        row=1, col=2,
-    )
+        ))
 
     # ══════════════════════════════════════════════════════════════════════════
     # TRACK 3 — RHOB + NPHI crossover fill
     #
-    # Notebook exact logic:
-    #   ax21: RHOB xlim (1.95, 2.95)
-    #   ax22: NPHI xlim (-0.15, 0.45) then inverted → displayed 0.45 left
-    #   rhob_min, rhob_max = ax21.get_xlim() = (1.95, 2.95)
-    #   nphi_min, nphi_max = ax22.get_xlim() = (-0.15, 0.45)  ← pre-inversion
-    #   rhob_to_nphi = ((rhob - rhob_min)/(rhob_max-rhob_min)) *
-    #                  (nphi_max - nphi_min) + nphi_min
-    #   fill where nphi < rhob_to_nphi → orange (HC)
-    #   fill where nphi > rhob_to_nphi → grey   (Shale)
+    # Notebook:
+    #   ax21: RHOB xlim (1.95, 2.95) — red
+    #   ax22: NPHI xlim (-0.15, 0.45) → invert_xaxis() → displayed 0.45 left
+    #   nphi_min, nphi_max = ax22.get_xlim() AFTER inversion = (0.45, -0.15)
+    #   rhob_to_nphi = ((rhob-1.95)/(2.95-1.95)) * (-0.15-0.45) + 0.45
+    #                = ((rhob-1.95)/1.0) * (-0.60) + 0.45
+    #   fill nphi < rhob_to_nphi → orange (HC)
+    #   fill nphi > rhob_to_nphi → grey   (Shale)
     #
-    # In Plotly: both curves plotted in NPHI-coordinate space.
-    # x-axis range = [0.45, -0.15]  (inverted = 0.45 on left, -0.15 on right)
+    # KEY: ax22.get_xlim() is called AFTER invert_xaxis(), so:
+    #   nphi_min = 0.45 (left side), nphi_max = -0.15 (right side)
+    # So rhob_to_nphi maps RHOB=1.95 → 0.45 (left), RHOB=2.95 → -0.15 (right)
+    # This means HIGH rhob → LOW nphi coordinate (right side = dense)
+    #
+    # x-axis range in Plotly: [0.45, -0.15]  (inverted, 0.45 left)
     # ══════════════════════════════════════════════════════════════════════════
-    has_rhob = rhob_col and rhob_col in work.columns
-    has_nphi = nphi_col and nphi_col in work.columns
+    has_rhob = bool(rhob_col and rhob_col in work.columns)
+    has_nphi = bool(nphi_col and nphi_col in work.columns)
 
-    RHOB_MIN, RHOB_MAX       = 1.95, 2.95
-    NPHI_PRE_MIN, NPHI_PRE_MAX = -0.15, 0.45   # pre-inversion limits
+    RHOB_MIN, RHOB_MAX = 1.95, 2.95
+    # AFTER inversion: nphi_min=0.45 (left), nphi_max=-0.15 (right)
+    NPHI_MIN_INV, NPHI_MAX_INV = 0.45, -0.15
 
     if has_rhob and has_nphi:
         rhob = work[rhob_col].values.astype(float)
         nphi = work[nphi_col].values.astype(float)
-        if np.nanmedian(nphi) > 1.0:
+        if _np.nanmedian(nphi) > 1.0:
             nphi = nphi / 100.0
 
-        rhob = np.clip(rhob, RHOB_MIN, RHOB_MAX)
-        nphi = np.clip(nphi, NPHI_PRE_MIN - 0.05, NPHI_PRE_MAX + 0.05)
+        rhob_c = _np.clip(rhob, RHOB_MIN, RHOB_MAX)
+        nphi_c = _np.clip(nphi, -0.20, 0.65)
 
-        # Map RHOB to NPHI coordinate space (notebook formula exactly)
+        # Map RHOB → NPHI inverted coordinate space
+        # Formula: ((rhob-rhob_min)/(rhob_max-rhob_min)) * (nphi_max-nphi_min) + nphi_min
+        # With post-inversion limits: nphi_min=0.45, nphi_max=-0.15
         rhob_to_nphi = (
-            (rhob - RHOB_MIN) / (RHOB_MAX - RHOB_MIN)
-        ) * (NPHI_PRE_MAX - NPHI_PRE_MIN) + NPHI_PRE_MIN
-        # rhob_to_nphi range: [-0.15, 0.45] same coordinate space as nphi
+            (rhob_c - RHOB_MIN) / (RHOB_MAX - RHOB_MIN)
+        ) * (NPHI_MAX_INV - NPHI_MIN_INV) + NPHI_MIN_INV
+        # rhob_to_nphi: RHOB=1.95 → 0.45, RHOB=2.95 → -0.15
 
-        # ── Contiguous-run fill segments ──────────────────────────────────────
-        def _fill_runs(mask, fc, name):
-            valid = mask & ~np.isnan(nphi) & ~np.isnan(rhob_to_nphi)
-            idx = np.where(valid)[0]
+        def _fill_runs_t3(mask, fc, name):
+            valid = mask & ~_np.isnan(nphi_c) & ~_np.isnan(rhob_to_nphi)
+            idx = _np.where(valid)[0]
             if not len(idx):
                 return
             runs, cur = [], [idx[0]]
@@ -1010,98 +998,228 @@ def plot_triple_combo_lit(df, gr_col=None, rt_col=None, rhob_col=None,
             runs.append(cur)
             for ri, r in enumerate(runs):
                 d_r  = depth[r]
-                n_r  = nphi[r]
+                n_r  = nphi_c[r]
                 rb_r = rhob_to_nphi[r]
-                # Closed polygon: NPHI forward → rhob_to_nphi backward
                 fig.add_trace(go.Scatter(
-                    x=np.concatenate([n_r, rb_r[::-1]]),
-                    y=np.concatenate([d_r, d_r[::-1]]),
+                    x=_np.concatenate([n_r, rb_r[::-1]]),
+                    y=_np.concatenate([d_r, d_r[::-1]]),
                     fill="toself", fillcolor=fc,
                     line=dict(width=0), mode="none",
-                    name=name, showlegend=(ri == 0),
-                    legendgroup=name, hoverinfo="skip",
-                ), row=1, col=3)
+                    name=name,
+                    showlegend=(ri == 0),
+                    legendgroup=name,
+                    hoverinfo="skip",
+                    xaxis="x3", yaxis="y",
+                ))
 
-        _fill_runs(nphi < rhob_to_nphi, "rgba(255,152,0,0.60)",  "HC Zone")
-        _fill_runs(nphi > rhob_to_nphi, "rgba(128,128,128,0.50)", "Shale")
+        _fill_runs_t3(nphi_c < rhob_to_nphi, "rgba(255,152,0,0.60)",  "HC Zone")
+        _fill_runs_t3(nphi_c > rhob_to_nphi, "rgba(128,128,128,0.50)", "Shale")
 
-        # NPHI line (darkgreen) — in NPHI coordinate space
+        # NPHI line (darkgreen, in inverted NPHI coordinate space)
         fig.add_trace(go.Scatter(
-            x=nphi, y=depth_s, mode="lines", name="NPHI",
+            x=nphi_c, y=depth_s, mode="lines", name="NPHI",
             line=dict(color="darkgreen", width=1.8),
+            xaxis="x3", yaxis="y",
             hovertemplate="NPHI: %{x:.3f} v/v<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=3)
-
-        # RHOB line (red) — mapped into NPHI coordinate space; real value in tooltip
+        ))
+        # RHOB line (red) mapped into NPHI coordinate space
         fig.add_trace(go.Scatter(
             x=rhob_to_nphi, y=depth_s, mode="lines", name="RHOB",
             line=dict(color="red", width=1.8),
-            customdata=rhob,
+            customdata=rhob_c,
+            xaxis="x3", yaxis="y",
             hovertemplate="RHOB: %{customdata:.3f} g/cc<br>Depth: %{y:.1f}<extra></extra>",
-        ), row=1, col=3)
-
-        # x-axis in NPHI space, inverted (0.45 left → -0.15 right)
-        # Dual tick labels: top row = NPHI values, corresponds to RHOB at same position
-        fig.update_xaxes(
-            title_text="← NPHI (v/v)  |  RHOB (g/cc) →",
-            title_font=dict(size=9, color="#333333"),
-            range=[NPHI_PRE_MAX, NPHI_PRE_MIN],   # inverted: 0.45 → -0.15
-            tickvals=[0.45, 0.30, 0.15, 0.00, -0.15],
-            ticktext=["0.45<br>1.95", "0.30<br>2.20",
-                      "0.15<br>2.45", "0.00<br>2.70", "-0.15<br>2.95"],
-            tickfont=dict(size=8, color="#333333"),
-            showgrid=True, gridcolor="#e0e0e0",
-            row=1, col=3,
-        )
+        ))
 
     elif has_rhob:
         rhob = work[rhob_col].values.astype(float)
         fig.add_trace(go.Scatter(
             x=rhob, y=depth_s, mode="lines", name="RHOB",
             line=dict(color="red", width=1.8),
-        ), row=1, col=3)
-        fig.update_xaxes(title_text="RHOB (g/cc)",
-                         range=[RHOB_MIN, RHOB_MAX],
-                         showgrid=True, gridcolor="#e0e0e0",
-                         row=1, col=3)
+            xaxis="x3", yaxis="y",
+        ))
     elif has_nphi:
         nphi = work[nphi_col].values.astype(float)
-        if np.nanmedian(nphi) > 1.0:
+        if _np.nanmedian(nphi) > 1.0:
             nphi = nphi / 100.0
         fig.add_trace(go.Scatter(
             x=nphi, y=depth_s, mode="lines", name="NPHI",
             line=dict(color="darkgreen", width=1.8),
-        ), row=1, col=3)
-        fig.update_xaxes(title_text="NPHI (v/v)",
-                         range=[NPHI_PRE_MAX, NPHI_PRE_MIN],
-                         showgrid=True, gridcolor="#e0e0e0",
-                         row=1, col=3)
+            xaxis="x3", yaxis="y",
+        ))
 
-    # ── Shared depth axis ─────────────────────────────────────────────────────
-    _dax = {k: v for k, v in _DEPTH_AX.items() if k != "title_text"}
-    fig.update_yaxes(**_dax, title_text="Depth (m)", row=1, col=1)
+    # ══════════════════════════════════════════════════════════════════════════
+    # LAYOUT — all x-axes at TOP, stacked outward like notebook twiny() axes
+    # Plotly constraint: position must be in [0, 1].
+    # Strategy: shrink y-axis domain to [0, 0.80], leaving 20% at top for axes.
+    # Then stack axes at: near=0.80, mid=0.88, far=0.96 (all within [0,1]).
+    # ══════════════════════════════════════════════════════════════════════════
+    _domain_t1 = [0.00, 0.30]
+    _domain_t2 = [0.37, 0.65]
+    _domain_t3 = [0.72, 1.00]
 
-    fig.update_layout(
+    # Plot area occupies bottom 80% of paper; top 20% reserved for axis labels
+    _plot_top  = 0.80   # top of plot area (y domain end)
+    _pos_near  = 0.80   # outward=5  — closest spine (1st axis row)
+    _pos_mid   = 0.88   # outward=55 — second axis row
+    _pos_far   = 0.96   # outward=105 — third axis row (LLS only)
+
+    layout_updates = dict(
+        # ── Shared depth (y) axis — domain shrunk to leave room for top axes ──
+        yaxis=dict(
+            autorange="reversed",
+            title="Depth (m)",
+            title_font=dict(size=12, color="#212121"),
+            tickfont=dict(color="#212121", size=10),
+            showgrid=True, gridcolor="#d8d8d8",
+            domain=[0, _plot_top],
+        ),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TRACK 1: CALI (near, top) + GR (mid, top)
+        # ══════════════════════════════════════════════════════════════════════
+
+        # CALI (x1) — nearest spine, black
+        xaxis=dict(
+            title="CALI (in)",
+            title_font=dict(size=10, color="black"),
+            tickfont=dict(color="black", size=8),
+            range=[6, 16],
+            side="top",
+            position=_pos_near,
+            domain=_domain_t1,
+            showgrid=True, gridcolor="#d8d8d8",
+            showline=True, linecolor="black",
+            anchor="free",
+        ),
+
+        # GR (x5) — second spine, limegreen, overlays x1
+        xaxis5=dict(
+            title="GR (API)",
+            title_font=dict(size=10, color="limegreen"),
+            tickfont=dict(color="limegreen", size=8),
+            range=[0, 150],
+            side="top",
+            overlaying="x",
+            position=_pos_mid,
+            showgrid=False,
+            zeroline=False,
+            showline=True, linecolor="limegreen",
+            anchor="free",
+        ),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TRACK 2: LLD (near) + LLM (mid) + LLS (far)
+        # ══════════════════════════════════════════════════════════════════════
+
+        # LLD (x2) — nearest spine, navy
+        xaxis2=dict(
+            title="LLD (Ohm m)",
+            title_font=dict(size=10, color="navy"),
+            tickfont=dict(color="navy", size=8),
+            type="log",
+            range=[_np.log10(0.2), _np.log10(2000)],
+            side="top",
+            position=_pos_near,
+            domain=_domain_t2,
+            showgrid=True, gridcolor="#d8d8d8",
+            showline=True, linecolor="navy",
+            anchor="free",
+        ),
+
+        # LLM (x4) — second spine, cyan, overlays x2
+        xaxis4=dict(
+            title="LLM (Ohm m)",
+            title_font=dict(size=10, color="cyan"),
+            tickfont=dict(color="cyan", size=8),
+            type="log",
+            range=[_np.log10(0.2), _np.log10(2000)],
+            side="top",
+            overlaying="x2",
+            position=_pos_mid,
+            showgrid=False,
+            zeroline=False,
+            showline=True, linecolor="cyan",
+            anchor="free",
+        ),
+
+        # LLS (x7) — third spine, blue, overlays x2
+        xaxis7=dict(
+            title="LLS (Ohm m)",
+            title_font=dict(size=10, color="blue"),
+            tickfont=dict(color="blue", size=8),
+            type="log",
+            range=[_np.log10(0.2), _np.log10(2000)],
+            side="top",
+            overlaying="x2",
+            position=_pos_far,
+            showgrid=False,
+            zeroline=False,
+            showline=True, linecolor="blue",
+            anchor="free",
+        ),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TRACK 3: NPHI (near, darkgreen) + RHOB (mid, red)
+        # ══════════════════════════════════════════════════════════════════════
+
+        # NPHI (x3) — nearest spine, darkgreen, inverted 0.45→-0.15
+        xaxis3=dict(
+            title="NPHI (v/v)",
+            title_font=dict(size=10, color="darkgreen"),
+            tickfont=dict(color="darkgreen", size=8),
+            tickvals=[0.45, 0.30, 0.15, 0.00, -0.15],
+            ticktext=["0.45", "0.30", "0.15", "0.00", "-0.15"],
+            range=[0.45, -0.15],
+            side="top",
+            position=_pos_near,
+            domain=_domain_t3,
+            showgrid=True, gridcolor="#d8d8d8",
+            showline=True, linecolor="darkgreen",
+            anchor="free",
+        ),
+
+        # RHOB (x6) — second spine, red, overlays x3
+        xaxis6=dict(
+            title="RHOB (g/cc)",
+            title_font=dict(size=10, color="red"),
+            tickfont=dict(color="red", size=8),
+            tickvals=[0.45, 0.30, 0.15, 0.00, -0.15],
+            ticktext=["1.95", "2.20", "2.45", "2.70", "2.95"],
+            range=[0.45, -0.15],
+            side="top",
+            overlaying="x3",
+            position=_pos_mid,
+            showgrid=False,
+            zeroline=False,
+            showline=True, linecolor="red",
+            anchor="free",
+        ),
+
+        # ── General layout ────────────────────────────────────────────────────
         title=dict(
             text="<b>Triple Combo Plot</b>",
             font=dict(size=16, color="#0D2B5E"),
             x=0.5, xanchor="center",
         ),
-        height=870,
-        margin=dict(l=65, r=175, t=90, b=55),
+        height=950,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(color="#212121"),
+        showlegend=True,
         legend=dict(
             orientation="v",
-            yanchor="middle", y=0.5,
+            yanchor="middle", y=0.4,
             xanchor="left",   x=1.01,
             bgcolor="rgba(255,255,255,0.95)",
             bordercolor="#aaaaaa", borderwidth=1,
             font=dict(color="#212121", size=10),
         ),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        font=dict(color="#212121"),
-        showlegend=True,
+        margin=dict(l=65, r=160, t=60, b=40),
+        hovermode="y unified",
     )
+
+    fig.update_layout(**layout_updates)
     return fig
 
 

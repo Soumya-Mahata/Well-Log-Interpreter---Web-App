@@ -136,42 +136,61 @@ Compute **Vsh** (Volume of Shale) from the Gamma Ray log using multiple methods.
                 _gr_v  = df_cur[gr_vsh].values
                 _vsh_v = df_cur["VSH"].values
                 _gr_cut = gr_clean_val + (gr_shale_val - gr_clean_val) * 0.50
+                _gr_max = max(150.0, float(df_cur[gr_vsh].quantile(0.99)) * 1.05)
 
                 fig_vsh = _msp(rows=1, cols=2, shared_yaxes=True,
                                 subplot_titles=["GR (API)", "VSHALE"],
                                 horizontal_spacing=0.04)
 
                 # ══════════════════════════════════════════════════════════════
-                # Track 1 — GR  (identical logic to Triple Combo GR track)
-                # fill_betweenx(depth, 0, gr, where=(gr < gr_cutoff))  → yellow
-                # fill_betweenx(depth, 0, gr, where=(gr >= gr_cutoff)) → grey
-                # GR line on top: limegreen, lw=1.5
+                # Track 1 — GR
+                # Exact same logic as Triple Combo GR track:
+                #   fill_betweenx(depth, 0, gr, where=(gr < cutoff))  → yellow
+                #   fill_betweenx(depth, 0, gr, where=(gr >= cutoff)) → grey
+                # Implemented as contiguous-run closed polygons (x=0 baseline)
                 # ══════════════════════════════════════════════════════════════
-                _gr_cut = _gr_cut  # midpoint of clean-shale range
+                _gr_clipped = _np.clip(_gr_v, 0, _gr_max)
 
-                # Sand fill: 0 → GR clamped at cutoff where GR < cutoff
-                _gr_sand_v  = _np.where(_gr_v < _gr_cut, _gr_v, _gr_cut)
-                fig_vsh.add_trace(_go.Scatter(
-                    x=_gr_sand_v, y=_dep,
-                    mode="lines", name="Sand Zone",
-                    line=dict(width=0, color="rgba(255,235,59,0)"),
-                    fill="tozerox", fillcolor="rgba(255,235,59,0.55)",
-                    hoverinfo="skip",
-                ), row=1, col=1)
+                def _vsh_fill_betweenx_zero(mask, fill_color, legend_name):
+                    """Exact fill_betweenx(depth, 0, gr, where=mask) equivalent."""
+                    idx = _np.where(mask & ~_np.isnan(_gr_clipped))[0]
+                    if not len(idx):
+                        return
+                    runs, cur = [], [idx[0]]
+                    for i in idx[1:]:
+                        if i == cur[-1] + 1:
+                            cur.append(i)
+                        else:
+                            runs.append(cur); cur = [i]
+                    runs.append(cur)
+                    for ri, r in enumerate(runs):
+                        d_r  = _dep[r]
+                        gr_r = _gr_clipped[r]
+                        # Closed polygon: zeros forward + gr reversed
+                        x_p = _np.concatenate([_np.zeros(len(r)), gr_r[::-1]])
+                        y_p = _np.concatenate([d_r,               d_r[::-1]])
+                        fig_vsh.add_trace(_go.Scatter(
+                            x=x_p, y=y_p,
+                            fill="toself", fillcolor=fill_color,
+                            line=dict(width=0), mode="none",
+                            name=legend_name,
+                            showlegend=(ri == 0),
+                            legendgroup=legend_name,
+                            hoverinfo="skip",
+                        ), row=1, col=1)
 
-                # Shale fill: 0 → GR clamped at cutoff where GR >= cutoff
-                _gr_shale_v = _np.where(_gr_v >= _gr_cut, _gr_v, _gr_cut)
-                fig_vsh.add_trace(_go.Scatter(
-                    x=_gr_shale_v, y=_dep,
-                    mode="lines", name="Shale Zone",
-                    line=dict(width=0, color="rgba(128,128,128,0)"),
-                    fill="tozerox", fillcolor="rgba(128,128,128,0.50)",
-                    hoverinfo="skip",
-                ), row=1, col=1)
+                _vsh_fill_betweenx_zero(
+                    _gr_v < _gr_cut,
+                    "rgba(255,255,0,0.50)", "Sand Zone"
+                )
+                _vsh_fill_betweenx_zero(
+                    _gr_v >= _gr_cut,
+                    "rgba(128,128,128,0.50)", "Shale Zone"
+                )
 
-                # GR line on top (limegreen, lw=1.5) — identical to triple combo
+                # GR line on top (limegreen, identical to triple combo)
                 fig_vsh.add_trace(_go.Scatter(
-                    x=_gr_v, y=_dep,
+                    x=_gr_clipped, y=_dep,
                     mode="lines", name="GR log",
                     line=dict(color="limegreen", width=1.5),
                     hovertemplate="GR: %{x:.1f} API<br>Depth: %{y:.1f}<extra></extra>",
@@ -188,7 +207,6 @@ Compute **Vsh** (Volume of Shale) from the Gamma Ray log using multiple methods.
                     annotation_text=f"|GRshale={gr_shale_val:.0f}",
                     annotation_font=dict(color="#C62828", size=9),
                     annotation_position="top right")
-                _gr_max = max(150.0, float(df_cur[gr_vsh].quantile(0.99)) * 1.05)
                 fig_vsh.update_xaxes(
                     title_text="GR (API)", range=[0, _gr_max],
                     showgrid=True, gridcolor="#d4d4d4",
